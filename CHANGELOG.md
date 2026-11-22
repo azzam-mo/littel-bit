@@ -9,6 +9,20 @@
 
 ### المرحلة الثانية: إعداد بيئة المشروع والمستودع
 - تهيئة مستودع Git محلي بفرع `main`.
-- إنشاء نسخة احتياطية محلية كاملة للمشروع.
+- إنشاء نسخة احتياطية محلية كاملة للمشروع (`backups/LittleBit-Loader-main-backup-...tar.gz`).
 - تفريع فرع التطوير `dev`.
 - إنشاء بنية محرك C++ الأساسية ومكتبات الفحص والـ Unit Tests.
+
+### المرحلة الثالثة والرابعة: تطوير محرك LittleBit Core والـ Tokenizer
+- **`binary_packer`**: تطبيق خوارزمية فك وضغط مصفوفات البتات الثنائية (`{-1, +1}`) وحسابات `binary_matvec_mult` المباشرة دون تخصيص ذاكرة وسيطة.
+- **`LittleBitLinear`**: محاكاة حسابية متطابقة لطبقة LittleBitLinear تشمل المسار الأساسي (Primary) والمسار المتبقي (Residual) ومقاييس الحجم ($u_1, u_2, v_1, v_2$).
+- **`SafeTensorsFile`**: قارئ تنسورات بذاكرة معنونة `mmap` مع تحويل تلقائي من BF16/FP16 إلى FP32 وقراءة مباشرة لهيكل الطبقات.
+- **`Tokenizer`**: محرك Byte-Pair Encoding (BPE) مكتمل يدعم تشفير وفك تشفير النصوص الإنجليزية والعربية ومعالجة الرموز الخاصة.
+- **Unit Tests**: نجاح كافة اختبارات الوحدة (4 من أصل 4 بنسبة 100%):
+  - `test_binary_packer`: نجح.
+  - `test_littlebit_linear`: نجح (تطابق حسابي 100% مع المرجع الرياضي).
+  - `test_safetensors`: نجح.
+  - `test_tokenizer`: نجح (تشفير وفك تشفير كامل باللغتين).
+- **Packaging & CI**:
+  - تطوير سكربت `scripts/package_ipa.py` و `scripts/package_ipa.sh` لتغليف حزم `.ipa` غير الموقعة على Linux بهيكل `Payload/`.
+  - إعداد مسار GitHub Actions (`.github/workflows/ci.yml`) لاختبار وتجميع المحرك على Ubuntu.

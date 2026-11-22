@@ -1,0 +1,40 @@
+name: LittleBit Engine CI (Linux)
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ zip
+
+    - name: Configure CMake
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build C++ Engine & Tests
+      run: |
+        cmake --build build --config Release -j$(nproc)
+
+    - name: Run Unit Tests
+      run: |
+        ctest --test-dir build --output-on-failure
+
+    - name: Test Unsigned IPA Packager
+      run: |
+        # Create a mock .app structure to verify packaging pipeline on Linux
+        mkdir -p build/Mock.app
+        echo "APPL????" > build/Mock.app/PkgInfo
+        echo '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.littlebit.loader</string></dict></plist>' > build/Mock.app/Info.plist
+        ./scripts/package_ipa.sh build/Mock.app build/LittleBitLoader-mock.ipa
+        unzip -l build/LittleBitLoader-mock.ipa
