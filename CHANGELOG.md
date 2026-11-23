@@ -1,6 +1,6 @@
 # Changelog — LittleBit Loader
 
-## [Unreleased] - 2026-11-22
+## [Unreleased] - 2026-11-23
 
 ### المرحلة الأولى: تحليل النموذج والمواصفات
 - تحليل نموذج `littlebit-qwen3-8b-0.55bpw` (Qwen3-8B base, 36 layers, 32 Q heads, 8 KV heads, head dim 128).
@@ -67,6 +67,14 @@
 - ميزانية الذاكرة: 288KiB/token للـ KV، 144MiB عند 512 و288MiB عند 1024؛ RSS بعد التحميل ~1011MiB وبعد التوليد ~2330MiB؛ لا افتراض بقدرة iPhone 13 على أي حجم.
 - Xcode: تحقق إنشائي (`scripts/check_xcode_project.py`)؛ Deployment iOS 16، arm64، bridging header، Automatic signing مع إمكانية تمرير `DEVELOPMENT_TEAM`.
 - توثيق كامل في `docs/phase8-real-model-validation.md`. لم يُبدأ أي نقل منصات قبل إثبات صحة المحرك.
+
+### المرحلة التاسعة — Profiling (بدون أي تحسين بعد)
+- أُضيف `tests/perf_benchmark.cpp` و`scripts/benchmark_phase9.py` كـ benchmark قابل لإعادة التشغيل على الأوزان الحقيقية؛ يُقس TTFT وPrefill وDecode ولكل طبقة ومكوّن، ويتحقق أن نسخة القياس تعطي لوغاريتمات المحرك نفسها (`max_abs=0` على 14 forward).
+- خط الأساس على 4 vCPU: TTFT=142.6s لـ11 رمزًا، decode=13.39s/token، خيط واحد فقط (99.7% من نواة ≈24.9% من الآلة).
+- أكبر ثلاثة اختناقات مقاسة: MLP binary projections 9.87s/forward (75.5%)، attention projections 2.68s/forward (20.5%)، `lm_head` 0.52s/forward (4.0%). تصحّح فرضية المرحلة الثامنة التي كانت تتهم `lm_head` وحده.
+- Bandwidth فعلي: 0.039 GB/s للطبقات الثنائية (حلقة لكل بت) مقابل 2.39 GB/s لـ`lm_head`؛ AVX2/AVX512 متوفرة لكن غير مستخدمة.
+- ترتيب الحلول المقترحة قبل التنفيذ: (1) تحسين نواة `binary_matvec_mult`، (2) multithreading على صفوف المصفوفة، (3) SIMD لـ`lm_head`، ثم تأجيل GQA/KV وtop-p لانخفاض عائدهما الحالي.
+- التوثيق: `docs/phase9-profiling-baseline.md` و`docs/phase9-profiles/baseline.{json,md}`. لم يُغيّر أي كود محرك، ولم تبدأ المرحلة الثانية بعد.
 
 ### نتائج الاختبارات (100% نجاح لكافة الاختبارات الثمانية):
 1. `test_binary_packer`: نجح.

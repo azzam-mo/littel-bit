@@ -89,3 +89,6 @@ target_link_libraries(logits_probe PRIVATE littlebit_engine)
 
 add_executable(real_model_smoke tests/real_model_smoke.cpp)
 target_link_libraries(real_model_smoke PRIVATE littlebit_engine)
+
+add_executable(perf_benchmark tests/perf_benchmark.cpp)
+target_link_libraries(perf_benchmark PRIVATE littlebit_engine)
