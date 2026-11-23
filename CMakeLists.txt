@@ -22,6 +22,11 @@ add_library(littlebit_engine STATIC
     src/linear.cpp
     src/safetensors.cpp
     src/tokenizer.cpp
+    src/ops.cpp
+    src/attention.cpp
+    src/mlp.cpp
+    src/transformer_block.cpp
+    src/model.cpp
 )
 
 # Unit Tests
@@ -42,3 +47,11 @@ add_test(NAME test_safetensors COMMAND test_safetensors)
 add_executable(test_tokenizer tests/test_tokenizer.cpp)
 target_link_libraries(test_tokenizer PRIVATE littlebit_engine)
 add_test(NAME test_tokenizer COMMAND test_tokenizer)
+
+add_executable(test_ops tests/test_ops.cpp)
+target_link_libraries(test_ops PRIVATE littlebit_engine)
+add_test(NAME test_ops COMMAND test_ops)
+
+add_executable(test_transformer_block tests/test_transformer_block.cpp)
+target_link_libraries(test_transformer_block PRIVATE littlebit_engine)
+add_test(NAME test_transformer_block COMMAND test_transformer_block)
