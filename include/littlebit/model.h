@@ -61,6 +61,9 @@ public:
 
     Qwen3Model() = default;
 
+    // Wall-clock time spent in the last successful load() call (milliseconds)
+    double last_load_time_ms = 0.0;
+
     // Load full model from directory containing model.safetensors, config.json, vocab.json, merges.txt
     bool load(const std::string& model_dir, size_t max_seq_len = 1024, size_t num_layers_to_load = 0);
 

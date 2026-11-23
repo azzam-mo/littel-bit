@@ -43,6 +43,8 @@ class LittleBitEngine: ObservableObject {
     @Published var kvCacheMB: Int = 0
 
     private var memoryTimer: Timer?
+    private var securityScopedModelURL: URL?
+    private var didStartModelAccess = false
 
     init() {
         startMemoryMonitoring()
@@ -60,6 +62,11 @@ class LittleBitEngine: ObservableObject {
         self.state = .loading
         self.lastErrorMessage = nil
 
+        // Files.app imports are security-scoped; keep the scope alive until mmap is ready.
+        securityScopedModelURL?.stopAccessingSecurityScopedResource()
+        securityScopedModelURL = directoryURL
+        didStartModelAccess = directoryURL.startAccessingSecurityScopedResource()
+
         let bridge = LittleBitEngineBridge.sharedInstance()
         bridge.loadModel(atPath: directoryURL.path, maxSeqLen: maxSeqLen) { [weak self] success, errorMsg in
             guard let self = self else { return }
@@ -76,6 +83,11 @@ class LittleBitEngine: ObservableObject {
 
     func unloadModel() {
         LittleBitEngineBridge.sharedInstance().unloadModel()
+        if didStartModelAccess {
+            securityScopedModelURL?.stopAccessingSecurityScopedResource()
+            didStartModelAccess = false
+        }
+        securityScopedModelURL = nil
         self.state = .unloaded
         self.currentModelName = "لا يوجد نموذج محدد"
         self.currentModelPath = nil

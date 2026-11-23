@@ -55,3 +55,20 @@ add_test(NAME test_ops COMMAND test_ops)
 add_executable(test_transformer_block tests/test_transformer_block.cpp)
 target_link_libraries(test_transformer_block PRIVATE littlebit_engine)
 add_test(NAME test_transformer_block COMMAND test_transformer_block)
+
+# Full inference-path smoke test with a generated tiny Qwen3-shaped model.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(TINY_MODEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/tiny-model")
+add_custom_command(
+    OUTPUT "${TINY_MODEL_DIR}/model.safetensors"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/make_tiny_model.py" "${TINY_MODEL_DIR}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/make_tiny_model.py"
+    COMMENT "Generating tiny synthetic model fixture"
+    VERBATIM
+)
+add_custom_target(tiny_model_fixture DEPENDS "${TINY_MODEL_DIR}/model.safetensors")
+
+add_executable(test_model_inference tests/test_model_inference.cpp)
+add_dependencies(test_model_inference tiny_model_fixture)
+target_link_libraries(test_model_inference PRIVATE littlebit_engine)
+add_test(NAME test_model_inference COMMAND test_model_inference "${TINY_MODEL_DIR}")

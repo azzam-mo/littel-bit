@@ -6,6 +6,7 @@
 #include <iostream>
 #include <regex>
 #include <algorithm>
+#include <cstring>
 
 namespace littlebit {
 
@@ -163,8 +164,48 @@ std::vector<int32_t> Tokenizer::encode(const std::string& text, bool add_bos) co
     if (add_bos) {
         token_ids.push_back(bos_id);
     }
-
     if (text.empty()) return token_ids;
+
+    // Qwen control tokens must not go through byte-level BPE.
+    static const struct { const char* text; int32_t id; } kSpecial[] = {
+        {"<|im_start|>", 151644},
+        {"<|im_end|>",   151645},
+        {"<|endoftext|>",151643},
+        {"<|im_sep|>",   151647},
+    };
+
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t best_pos = std::string::npos;
+        const char* best_text = nullptr;
+        int32_t best_id = 0;
+        for (const auto& sp : kSpecial) {
+            size_t found = text.find(sp.text, pos);
+            if (found != std::string::npos && found < best_pos) {
+                best_pos = found;
+                best_text = sp.text;
+                best_id = sp.id;
+            }
+        }
+
+        if (best_pos == std::string::npos) {
+            encode_plain(text.substr(pos), token_ids);
+            break;
+        }
+        if (best_pos > pos) {
+            encode_plain(text.substr(pos, best_pos - pos), token_ids);
+        }
+        // Prefer the id from the loaded vocabulary when available.
+        auto it = token_to_id_.find(best_text);
+        token_ids.push_back(it != token_to_id_.end() ? it->second : best_id);
+        pos = best_pos + std::strlen(best_text);
+    }
+
+    return token_ids;
+}
+
+void Tokenizer::encode_plain(const std::string& text, std::vector<int32_t>& out) const {
+    if (text.empty()) return;
 
     // Convert raw UTF-8 bytes to byte-level BPE string
     const auto& byte_encoder = get_byte_encoder();
@@ -173,14 +214,12 @@ std::vector<int32_t> Tokenizer::encode(const std::string& text, bool add_bos) co
         bpe_str += byte_encoder.at(byte_val);
     }
 
-    // Split into regex chunks or process token
     auto bpe_tokens = bpe(bpe_str);
     for (const auto& tok : bpe_tokens) {
         auto it = token_to_id_.find(tok);
         if (it != token_to_id_.end()) {
-            token_ids.push_back(it->second);
+            out.push_back(it->second);
         } else {
-            // Fallback: encode per character
             for (size_t i = 0; i < tok.size();) {
                 unsigned char c = tok[i];
                 size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
@@ -188,14 +227,25 @@ std::vector<int32_t> Tokenizer::encode(const std::string& text, bool add_bos) co
                 std::string sub = tok.substr(i, len);
                 auto sub_it = token_to_id_.find(sub);
                 if (sub_it != token_to_id_.end()) {
-                    token_ids.push_back(sub_it->second);
+                    out.push_back(sub_it->second);
                 }
                 i += len;
             }
         }
     }
+}
 
-    return token_ids;
+std::string Tokenizer::apply_chat_template(
+    const std::string& user_message,
+    const std::string& system_message
+) const {
+    std::string prompt;
+    if (!system_message.empty()) {
+        prompt = "<|im_start|>system\n" + system_message + "<|im_end|>\n";
+    }
+    prompt += "<|im_start|>user\n" + user_message + "<|im_end|>\n";
+    prompt += "<|im_start|>assistant\n";
+    return prompt;
 }
 
 std::string Tokenizer::decode(int32_t token_id) const {

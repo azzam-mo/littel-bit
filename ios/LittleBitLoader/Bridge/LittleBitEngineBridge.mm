@@ -5,12 +5,40 @@
 #include <memory>
 #include <string>
 
+namespace {
+
+// Byte-level BPE can emit a multi-byte UTF-8 sequence across several tokens.
+// Buffer incomplete tails so SwiftUI never receives invalid standalone bytes.
+std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
+    std::string buffer = pending + bytes;
+    pending.clear();
+    std::string out;
+    size_t i = 0;
+    while (i < buffer.size()) {
+        unsigned char c = static_cast<unsigned char>(buffer[i]);
+        size_t need = (c < 0x80) ? 1 : (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 0;
+        if (need == 0 || i + need > buffer.size()) {
+            if (need == 0) ++i;
+            else break;
+            continue;
+        }
+        out.append(buffer, i, need);
+        i += need;
+    }
+    if (i < buffer.size()) pending = buffer.substr(i);
+    return out;
+}
+
+} // namespace
+
 @implementation EnginePerformanceMetrics
 @end
 
 @interface LittleBitEngineBridge () {
     std::unique_ptr<littlebit::Qwen3Model> _model;
     std::atomic<bool> _cancelGeneration;
+    std::atomic<bool> _busy;
+    std::string _pendingUTF8;
 }
 @property (nonatomic, readwrite) EngineState state;
 @property (nonatomic, readwrite, nullable) NSString* currentModelPath;
@@ -35,6 +63,7 @@
         _currentModelPath = nil;
         _lastError = nil;
         _cancelGeneration = false;
+        _busy = false;
         _model = std::make_unique<littlebit::Qwen3Model>();
     }
     return self;
@@ -67,6 +96,11 @@
 - (void)loadModelAtPath:(NSString*)modelDirPath 
              maxSeqLen:(NSInteger)maxSeqLen 
             completion:(void (^)(BOOL success, NSString* _Nullable errorMsg))completion {
+    if (_busy.exchange(true)) {
+        if (completion) completion(NO, @"Another model operation is in progress.");
+        return;
+    }
+
     self.state = EngineStateLoading;
     self.lastError = nil;
 
@@ -75,6 +109,7 @@
         bool ok = self->_model->load(cppPath, static_cast<size_t>(maxSeqLen));
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            _busy = false;
             if (ok) {
                 self.state = EngineStateReady;
                 self.currentModelPath = modelDirPath;
@@ -89,8 +124,14 @@
 }
 
 - (void)unloadModel {
+    if (_busy.load()) {
+        // Never free the model while a background forward pass is using it.
+        _cancelGeneration = true;
+        return;
+    }
     _model->clear_cache();
     _model = std::make_unique<littlebit::Qwen3Model>();
+    _pendingUTF8.clear();
     self.state = EngineStateUnloaded;
     self.currentModelPath = nil;
     self.lastError = nil;
@@ -102,12 +143,17 @@
           maxNewTokens:(NSInteger)maxNewTokens
                onToken:(BOOL (^)(NSString* tokenStr))onToken
             completion:(void (^)(EnginePerformanceMetrics* metrics))completion {
-    if (self.state != EngineStateReady) {
+    if (self.state != EngineStateReady || _busy.exchange(true)) {
+        if (completion) {
+            EnginePerformanceMetrics* empty = [[EnginePerformanceMetrics alloc] init];
+            completion(empty);
+        }
         return;
     }
 
     self.state = EngineStateGenerating;
     _cancelGeneration = false;
+    _pendingUTF8.clear();
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_USER_INITIATED, 0), ^{
         std::string cppPrompt = [prompt UTF8String];
@@ -117,8 +163,11 @@
                 return false;
             }
             __block BOOL keep_going = YES;
+            std::string decoded = append_utf8_stream(_pendingUTF8, token_str);
+            NSString* nsToken = [[NSString alloc] initWithBytes:decoded.data()
+                                                         length:decoded.size()
+                                                       encoding:NSUTF8StringEncoding];
             dispatch_sync(dispatch_get_main_queue(), ^{
-                NSString* nsToken = [NSString stringWithUTF8String:token_str.c_str()];
                 if (onToken) {
                     keep_going = onToken(nsToken ?: @"");
                 }
@@ -134,6 +183,8 @@
             cppCallback
         );
 
+        _busy = false;
+        _pendingUTF8.clear();
         dispatch_async(dispatch_get_main_queue(), ^{
             self.state = EngineStateReady;
             EnginePerformanceMetrics* res = [[EnginePerformanceMetrics alloc] init];

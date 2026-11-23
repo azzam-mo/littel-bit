@@ -75,11 +75,26 @@ bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t n
         std::cout << "[MODEL] Limiting layers to load: " << config.num_hidden_layers << std::endl;
     }
 
-    // 2. Load Tokenizer
+    // Validate architecture before allocating any buffers. A mismatch here would
+    // otherwise cause out-of-bounds RoPE/KV accesses on device.
+    if (config.num_attention_heads == 0 || config.num_key_value_heads == 0 ||
+        config.num_attention_heads % config.num_key_value_heads != 0 ||
+        config.head_dim == 0 || config.head_dim % 2 != 0 ||
+        config.num_hidden_layers == 0 || config.hidden_size == 0 || config.vocab_size == 0) {
+        std::cerr << "[MODEL] Error: Invalid model architecture in config.json" << std::endl;
+        return false;
+    }
+    if (config.num_attention_heads * config.head_dim != config.hidden_size) {
+        std::cerr << "[MODEL] Error: num_attention_heads * head_dim != hidden_size" << std::endl;
+        return false;
+    }
+
+    // 2. Load Tokenizer — required for correct text I/O, do not silently continue.
     std::string vocab_path = model_dir + "/vocab.json";
     std::string merges_path = model_dir + "/merges.txt";
     if (!tokenizer.load(vocab_path, merges_path)) {
-        std::cerr << "[MODEL] Warning: Tokenizer files not found in " << model_dir << std::endl;
+        std::cerr << "[MODEL] Error: Tokenizer files not found or invalid in " << model_dir << std::endl;
+        return false;
     }
 
     // 3. Open SafeTensors with mmap
@@ -122,7 +137,10 @@ bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t n
     kv_caches.resize(config.num_hidden_layers);
 
     for (size_t l = 0; l < config.num_hidden_layers; ++l) {
-        layers[l].initialize(l, config.hidden_size, config.intermediate_size, config.max_seq_len);
+        layers[l].initialize(
+            l, config.hidden_size, config.intermediate_size, config.max_seq_len,
+            config.num_attention_heads, config.num_key_value_heads, config.head_dim
+        );
         kv_caches[l].initialize(config.max_seq_len, config.num_key_value_heads, config.head_dim);
 
         std::string prefix = "model.layers." + std::to_string(l);
@@ -130,8 +148,8 @@ bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t n
     }
 
     auto end_time = std::chrono::high_resolution_clock::now();
-    double load_sec = std::chrono::duration<double>(end_time - start_time).count();
-    std::cout << "[MODEL] Successfully loaded in " << load_sec << "s. Current RSS: " 
+    last_load_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+    std::cout << "[MODEL] Successfully loaded in " << (last_load_time_ms / 1000.0) << "s. Current RSS: "
               << get_current_rss_mb() << " MB" << std::endl;
 
     return true;
@@ -191,27 +209,32 @@ PerformanceMetrics Qwen3Model::generate(
     std::function<bool(int32_t, const std::string&)> on_token
 ) {
     PerformanceMetrics metrics;
+    metrics.load_time_ms = last_load_time_ms;
     clear_cache();
 
     auto gen_start = std::chrono::high_resolution_clock::now();
 
-    // 1. Encode prompt
-    std::vector<int32_t> input_tokens = tokenizer.encode(prompt, true);
+    // 1. Encode prompt using the Qwen3 chat template (control tokens kept verbatim)
+    std::vector<int32_t> input_tokens = tokenizer.encode(tokenizer.apply_chat_template(prompt), false);
     if (input_tokens.empty()) {
         input_tokens.push_back(tokenizer.bos_id);
     }
 
-    // 2. Prefill phase
+    // 2. Prefill phase — never step past the RoPE table / KV cache capacity.
     const float* logits = nullptr;
-    for (size_t i = 0; i < input_tokens.size(); ++i) {
+    size_t prefill_len = std::min(input_tokens.size(), config.max_seq_len);
+    for (size_t i = 0; i < prefill_len; ++i) {
         logits = forward_token(input_tokens[i], i);
+    }
+    if (!logits) {
+        return metrics;
     }
 
     auto first_token_time = std::chrono::high_resolution_clock::now();
     metrics.ttft_ms = std::chrono::duration<double, std::milli>(first_token_time - gen_start).count();
 
     // 3. Generation phase
-    size_t cur_pos = input_tokens.size();
+    size_t cur_pos = prefill_len;
     int32_t next_token = sample_temperature_top_p(logits, config.vocab_size, temperature, top_p);
 
     for (size_t gen_i = 0; gen_i < max_new_tokens; ++gen_i) {

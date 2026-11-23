@@ -143,6 +143,15 @@ bool SafeTensorsFile::open(const std::string& filepath) {
         if (val.contains("data_offsets") && val["data_offsets"].is_array() && val["data_offsets"].size() == 2) {
             info.offset_begin = val["data_offsets"][0].get<size_t>();
             info.offset_end = val["data_offsets"][1].get<size_t>();
+
+            // Reject corrupt headers instead of handing out pointers outside the mmap.
+            // This is especially important for files imported from the iOS Files app.
+            size_t data_size = file_size_ - (8 + header_size_);
+            if (info.offset_begin > info.offset_end || info.offset_end > data_size) {
+                std::cerr << "SafeTensorsFile: Invalid data_offsets for tensor: " << info.name << std::endl;
+                close();
+                return false;
+            }
             info.data_ptr = data_offset_base_ + info.offset_begin;
         }
 

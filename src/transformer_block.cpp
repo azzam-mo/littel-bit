@@ -2,14 +2,24 @@
 
 namespace littlebit {
 
-void TransformerBlock::initialize(size_t idx, size_t h_size, size_t inter_size, size_t max_seq) {
+void TransformerBlock::initialize(
+    size_t idx,
+    size_t h_size,
+    size_t inter_size,
+    size_t max_seq,
+    size_t q_heads,
+    size_t kv_heads,
+    size_t h_dim
+) {
     layer_idx = idx;
     hidden_size = h_size;
 
     input_layernorm_weight.assign(hidden_size, 1.0f);
     post_attention_layernorm_weight.assign(hidden_size, 1.0f);
 
-    self_attn.initialize(hidden_size, 32, 8, 128, max_seq);
+    // Use the model configuration instead of hardcoded Qwen3-8B dimensions.
+    // This keeps the real 32/8/128 layout by default but allows small test models.
+    self_attn.initialize(hidden_size, q_heads, kv_heads, h_dim, max_seq);
     mlp.initialize(hidden_size, inter_size);
 
     norm_buf.resize(hidden_size);

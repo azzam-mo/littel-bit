@@ -27,7 +27,15 @@ public:
 
     TransformerBlock() = default;
 
-    void initialize(size_t idx, size_t h_size = 4096, size_t inter_size = 12288, size_t max_seq = 1024);
+    void initialize(
+        size_t idx,
+        size_t h_size = 4096,
+        size_t inter_size = 12288,
+        size_t max_seq = 1024,
+        size_t q_heads = 32,
+        size_t kv_heads = 8,
+        size_t h_dim = 128
+    );
 
     // Load weights from SafeTensors file
     bool load_from_safetensors(const SafeTensorsFile& file, const std::string& layer_prefix);

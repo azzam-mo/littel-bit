@@ -49,10 +49,19 @@
   - قياس استهلاك ذاكرة النظام الفعلية في الوقت الحقيقي.
 - **حزمة إدارة الاعتماديات (`Package.swift`)** و ملف التهيئة `Info.plist` لدعم مشاركة الملفات واستيراد المستندات المباشر.
 
-### نتائج الاختبارات (100% نجاح لكافة الاختبارات الستة):
+### المرحلة السابعة: جاهزية التشغيل الفعلي على iOS
+- توافق ARM64/iOS: إزالة أبعاد GQA المكتوبة وتمريرها من `ModelConfig`، منع تجاوز `max_seq_len`، التحقق من `config` و`data_offsets`، فشل صريح عند غياب الـ tokenizer، وتسجيل زمن التحميل.
+- Tokenizer: تمييز رموز تحكم Qwen، قالب محادثة `apply_chat_template`، وفك UTF-8 تدريجي في الجسر أثناء التدفق.
+- الجسر: حماية من العمليات المتزامنة (`_busy`)، إلغاء آمن، والحفاظ على صلاحية Files scope.
+- بناء iOS: مولّد `scripts/generate_xcode_project.py`، bridging header، واختبارات `LittleBitLoaderTests`.
+- اختبار مسار كامل على Linux عبر نموذج صناعي صغير (`tests/make_tiny_model.py` + `tests/test_model_inference`) يشمل prefill وتدفقًا وإيقافًا مبكرًا.
+- توثيق كامل في `docs/phase7-ios-readiness.md` لما تم التحقق منه وما يحتاج macOS/جهازًا حقيقيًا.
+
+### نتائج الاختبارات (100% نجاح لكافة الاختبارات السبعة):
 1. `test_binary_packer`: نجح.
 2. `test_littlebit_linear`: نجح.
 3. `test_safetensors`: نجح.
 4. `test_tokenizer`: نجح.
 5. `test_ops`: نجح.
 6. `test_transformer_block`: نجح.
+7. `test_model_inference`: نجح (مسار استدلال كامل + تدفق + إيقاف مبكر).
