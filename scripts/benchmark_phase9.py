@@ -43,6 +43,7 @@ def collect_env():
         "platform": platform.platform(),
         "machine": platform.machine(),
         "nproc": os.cpu_count(),
+        "avx2_mode": "scalar-forced" if os.environ.get("LITTLEBIT_DISABLE_AVX2") not in (None, "", "0") else "avx2-enabled",
     }
     env["uname"] = sh(["uname", "-a"])
     env["cpu_model"] = sh(["bash", "-lc", "lscpu | grep -m1 'Model name' | cut -d: -f2- | xargs"])

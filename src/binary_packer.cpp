@@ -44,6 +44,12 @@ void binary_matvec_mult(
     size_t M,
     size_t K
 ) {
+    if (littlebit::avx2_available()) {
+        littlebit::binary_matvec_mult_avx2(packed_A, x, y, M, K);
+        return;
+    }
+
+    // Original branchy scalar implementation from commit 87c2048 (rollback path).
     size_t words_per_row = (K + 31) / 32;
 
     for (size_t i = 0; i < M; ++i) {

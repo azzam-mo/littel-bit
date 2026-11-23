@@ -9,7 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-g -O0 -Wall -Wextra)
 else()
-    add_compile_options(-O3 -march=native -Wall -Wextra)
+    add_compile_options(-O3 -Wall -Wextra)
 endif()
 
 include_directories(
@@ -19,6 +19,7 @@ include_directories(
 # Engine Core Library
 add_library(littlebit_engine STATIC
     src/binary_packer.cpp
+    src/binary_packer_avx2.cpp
     src/linear.cpp
     src/safetensors.cpp
     src/tokenizer.cpp
@@ -92,3 +93,6 @@ target_link_libraries(real_model_smoke PRIVATE littlebit_engine)
 
 add_executable(perf_benchmark tests/perf_benchmark.cpp)
 target_link_libraries(perf_benchmark PRIVATE littlebit_engine)
+
+add_executable(binary_matvec_probe tests/binary_matvec_probe.cpp)
+target_link_libraries(binary_matvec_probe PRIVATE littlebit_engine)
