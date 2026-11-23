@@ -6,6 +6,9 @@ directly in Xcode on macOS:
 
     python3 scripts/generate_xcode_project.py
     open LittleBitLoader.xcodeproj
+
+Set DEVELOPMENT_TEAM=<your Apple Team ID> in the environment to embed the
+signing team; otherwise choose it manually in Xcode before running on device.
 """
 import os
 import sys
@@ -32,7 +35,7 @@ ENGINE_HEADERS = [
     "include/littlebit/tokenizer.h", "include/littlebit/ops.h",
     "include/littlebit/attention.h", "include/littlebit/mlp.h",
     "include/littlebit/transformer_block.h", "include/littlebit/model.h",
-    "include/nlohmann/json.hpp",
+    "include/littlebit/unicode_ranges.h", "include/nlohmann/json.hpp",
 ]
 BRIDGE_HEADERS = [
     "ios/LittleBitLoader/Bridge/LittleBitEngineBridge.h",
@@ -216,6 +219,7 @@ def main():
     test_fw_phase, test_fw_def = framework_phase("tests", [fw_test_f, fw_test_x])
     test_res_phase, test_res_def = resources_phase()
 
+    development_team = os.environ.get("DEVELOPMENT_TEAM", "").strip()
     common_settings = [
         "CLANG_CXX_LANGUAGE_STANDARD = c++17;",
         "CLANG_CXX_LIBRARY = libc++;",
@@ -226,8 +230,9 @@ def main():
         "IPHONEOS_DEPLOYMENT_TARGET = 16.0;",
         "OTHER_CPLUSPLUSFLAGS = ( \"$(inherited)\", \"-O3\" );",
         "SDKROOT = iphoneos;",
-        "SWIFT_OBJC_BRIDGING_HEADER = \"ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
+        "SWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
         "SWIFT_VERSION = 5.0;",
+        *([f"DEVELOPMENT_TEAM = {development_team};"] if development_team else []),
         "TARGETED_DEVICE_FAMILY = \"1,2\";",
     ]
 

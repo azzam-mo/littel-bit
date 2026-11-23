@@ -31,229 +31,206 @@
 		000000000000000000000018 /* mlp.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "include/littlebit/mlp.h"; sourceTree = "<group>"; };
 		000000000000000000000019 /* transformer_block.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "include/littlebit/transformer_block.h"; sourceTree = "<group>"; };
 		00000000000000000000001A /* model.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "include/littlebit/model.h"; sourceTree = "<group>"; };
-		00000000000000000000001B /* json.hpp */ = {isa = PBXFileReference; lastKnownFileType = text; path = "include/nlohmann/json.hpp"; sourceTree = "<group>"; };
-		00000000000000000000001C /* LittleBitEngineBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ios/LittleBitLoader/Bridge/LittleBitEngineBridge.h"; sourceTree = "<group>"; };
-		00000000000000000000001D /* LittleBitLoader-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h"; sourceTree = "<group>"; };
-		00000000000000000000001E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ios/LittleBitLoader/Info.plist"; sourceTree = "<group>"; };
-		00000000000000000000001F /* EngineSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ios/LittleBitLoaderTests/EngineSmokeTests.swift"; sourceTree = "<group>"; };
-		000000000000000000000020 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
-		000000000000000000000021 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
-		000000000000000000000022 /* LittleBitLoader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LittleBitLoader.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		000000000000000000000023 /* LittleBitLoaderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LittleBitLoaderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		00000000000000000000002A /* Foundation.framework in app Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000020 /* Foundation.framework */; };
-		00000000000000000000002B /* Foundation.framework in tests Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000020 /* Foundation.framework */; };
-		00000000000000000000002C /* XCTest.framework in tests Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000021 /* XCTest.framework */; };
-		00000000000000000000002E /* LittleBitLoaderApp.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000001 /* LittleBitLoaderApp.swift */; };
-		00000000000000000000002F /* LittleBitEngine.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000002 /* LittleBitEngine.swift */; };
-		000000000000000000000030 /* HomeView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* HomeView.swift */; };
-		000000000000000000000031 /* ModelManagerView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* ModelManagerView.swift */; };
-		000000000000000000000032 /* ChatView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005 /* ChatView.swift */; };
-		000000000000000000000033 /* PerformanceMonitorView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000006 /* PerformanceMonitorView.swift */; };
-		000000000000000000000034 /* LittleBitEngineBridge.mm in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000007 /* LittleBitEngineBridge.mm */; };
-		000000000000000000000035 /* binary_packer.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000008 /* binary_packer.cpp */; };
-		000000000000000000000036 /* linear.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000009 /* linear.cpp */; };
-		000000000000000000000037 /* safetensors.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000A /* safetensors.cpp */; };
-		000000000000000000000038 /* tokenizer.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* tokenizer.cpp */; };
-		000000000000000000000039 /* ops.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* ops.cpp */; };
-		00000000000000000000003A /* attention.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* attention.cpp */; };
-		00000000000000000000003B /* mlp.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000E /* mlp.cpp */; };
-		00000000000000000000003C /* transformer_block.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* transformer_block.cpp */; };
-		00000000000000000000003D /* model.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* model.cpp */; };
-		000000000000000000000041 /* LittleBitEngine.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000002 /* LittleBitEngine.swift */; };
-		000000000000000000000042 /* HomeView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* HomeView.swift */; };
-		000000000000000000000043 /* ModelManagerView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* ModelManagerView.swift */; };
-		000000000000000000000044 /* ChatView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005 /* ChatView.swift */; };
-		000000000000000000000045 /* PerformanceMonitorView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000006 /* PerformanceMonitorView.swift */; };
-		000000000000000000000046 /* EngineSmokeTests.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001F /* EngineSmokeTests.swift */; };
-		000000000000000000000047 /* LittleBitEngineBridge.mm in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000007 /* LittleBitEngineBridge.mm */; };
-		000000000000000000000048 /* binary_packer.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000008 /* binary_packer.cpp */; };
-		000000000000000000000049 /* linear.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000009 /* linear.cpp */; };
-		00000000000000000000004A /* safetensors.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000A /* safetensors.cpp */; };
-		00000000000000000000004B /* tokenizer.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* tokenizer.cpp */; };
-		00000000000000000000004C /* ops.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* ops.cpp */; };
-		00000000000000000000004D /* attention.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* attention.cpp */; };
-		00000000000000000000004E /* mlp.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000E /* mlp.cpp */; };
-		00000000000000000000004F /* transformer_block.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* transformer_block.cpp */; };
-		000000000000000000000050 /* model.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* model.cpp */; };
-		000000000000000000000024 /* App */ = {
+		00000000000000000000001B /* unicode_ranges.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "include/littlebit/unicode_ranges.h"; sourceTree = "<group>"; };
+		00000000000000000000001C /* json.hpp */ = {isa = PBXFileReference; lastKnownFileType = text; path = "include/nlohmann/json.hpp"; sourceTree = "<group>"; };
+		00000000000000000000001D /* LittleBitEngineBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ios/LittleBitLoader/Bridge/LittleBitEngineBridge.h"; sourceTree = "<group>"; };
+		00000000000000000000001E /* LittleBitLoader-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h"; sourceTree = "<group>"; };
+		00000000000000000000001F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ios/LittleBitLoader/Info.plist"; sourceTree = "<group>"; };
+		000000000000000000000020 /* EngineSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ios/LittleBitLoaderTests/EngineSmokeTests.swift"; sourceTree = "<group>"; };
+		000000000000000000000021 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		000000000000000000000022 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		000000000000000000000023 /* LittleBitLoader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LittleBitLoader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000024 /* LittleBitLoaderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LittleBitLoaderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		00000000000000000000002B /* Foundation.framework in app Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000021 /* Foundation.framework */; };
+		00000000000000000000002C /* Foundation.framework in tests Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000021 /* Foundation.framework */; };
+		00000000000000000000002D /* XCTest.framework in tests Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000022 /* XCTest.framework */; };
+		00000000000000000000002F /* LittleBitLoaderApp.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000001 /* LittleBitLoaderApp.swift */; };
+		000000000000000000000030 /* LittleBitEngine.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000002 /* LittleBitEngine.swift */; };
+		000000000000000000000031 /* HomeView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* HomeView.swift */; };
+		000000000000000000000032 /* ModelManagerView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* ModelManagerView.swift */; };
+		000000000000000000000033 /* ChatView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005 /* ChatView.swift */; };
+		000000000000000000000034 /* PerformanceMonitorView.swift in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000006 /* PerformanceMonitorView.swift */; };
+		000000000000000000000035 /* LittleBitEngineBridge.mm in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000007 /* LittleBitEngineBridge.mm */; };
+		000000000000000000000036 /* binary_packer.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000008 /* binary_packer.cpp */; };
+		000000000000000000000037 /* linear.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000009 /* linear.cpp */; };
+		000000000000000000000038 /* safetensors.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000A /* safetensors.cpp */; };
+		000000000000000000000039 /* tokenizer.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* tokenizer.cpp */; };
+		00000000000000000000003A /* ops.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* ops.cpp */; };
+		00000000000000000000003B /* attention.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* attention.cpp */; };
+		00000000000000000000003C /* mlp.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000E /* mlp.cpp */; };
+		00000000000000000000003D /* transformer_block.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* transformer_block.cpp */; };
+		00000000000000000000003E /* model.cpp in app Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* model.cpp */; };
+		000000000000000000000042 /* LittleBitEngine.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000002 /* LittleBitEngine.swift */; };
+		000000000000000000000043 /* HomeView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* HomeView.swift */; };
+		000000000000000000000044 /* ModelManagerView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* ModelManagerView.swift */; };
+		000000000000000000000045 /* ChatView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005 /* ChatView.swift */; };
+		000000000000000000000046 /* PerformanceMonitorView.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000006 /* PerformanceMonitorView.swift */; };
+		000000000000000000000047 /* EngineSmokeTests.swift in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000020 /* EngineSmokeTests.swift */; };
+		000000000000000000000048 /* LittleBitEngineBridge.mm in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000007 /* LittleBitEngineBridge.mm */; };
+		000000000000000000000049 /* binary_packer.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000008 /* binary_packer.cpp */; };
+		00000000000000000000004A /* linear.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000009 /* linear.cpp */; };
+		00000000000000000000004B /* safetensors.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000A /* safetensors.cpp */; };
+		00000000000000000000004C /* tokenizer.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* tokenizer.cpp */; };
+		00000000000000000000004D /* ops.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* ops.cpp */; };
+		00000000000000000000004E /* attention.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* attention.cpp */; };
+		00000000000000000000004F /* mlp.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000E /* mlp.cpp */; };
+		000000000000000000000050 /* transformer_block.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* transformer_block.cpp */; };
+		000000000000000000000051 /* model.cpp in tests Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* model.cpp */; };
+		000000000000000000000025 /* App */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000001 /* LittleBitLoaderApp.swift */, 000000000000000000000002 /* LittleBitEngine.swift */, 000000000000000000000003 /* HomeView.swift */, 000000000000000000000004 /* ModelManagerView.swift */, 000000000000000000000005 /* ChatView.swift */, 000000000000000000000006 /* PerformanceMonitorView.swift */, 000000000000000000000007 /* LittleBitEngineBridge.mm */, 00000000000000000000001C /* LittleBitEngineBridge.h */, 00000000000000000000001D /* LittleBitLoader-Bridging-Header.h */, 00000000000000000000001E /* Info.plist */,
+				000000000000000000000001 /* LittleBitLoaderApp.swift */, 000000000000000000000002 /* LittleBitEngine.swift */, 000000000000000000000003 /* HomeView.swift */, 000000000000000000000004 /* ModelManagerView.swift */, 000000000000000000000005 /* ChatView.swift */, 000000000000000000000006 /* PerformanceMonitorView.swift */, 000000000000000000000007 /* LittleBitEngineBridge.mm */, 00000000000000000000001D /* LittleBitEngineBridge.h */, 00000000000000000000001E /* LittleBitLoader-Bridging-Header.h */, 00000000000000000000001F /* Info.plist */,
 			);
 			sourceTree = "<group>";
 			path = "ios/LittleBitLoader";
 		};
-		000000000000000000000025 /* Engine */ = {
+		000000000000000000000026 /* Engine */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000008 /* binary_packer.cpp */, 000000000000000000000009 /* linear.cpp */, 00000000000000000000000A /* safetensors.cpp */, 00000000000000000000000B /* tokenizer.cpp */, 00000000000000000000000C /* ops.cpp */, 00000000000000000000000D /* attention.cpp */, 00000000000000000000000E /* mlp.cpp */, 00000000000000000000000F /* transformer_block.cpp */, 000000000000000000000010 /* model.cpp */, 000000000000000000000011 /* binary_packer.h */, 000000000000000000000012 /* common.h */, 000000000000000000000013 /* linear.h */, 000000000000000000000014 /* safetensors.h */, 000000000000000000000015 /* tokenizer.h */, 000000000000000000000016 /* ops.h */, 000000000000000000000017 /* attention.h */, 000000000000000000000018 /* mlp.h */, 000000000000000000000019 /* transformer_block.h */, 00000000000000000000001A /* model.h */, 00000000000000000000001B /* json.hpp */,
+				000000000000000000000008 /* binary_packer.cpp */, 000000000000000000000009 /* linear.cpp */, 00000000000000000000000A /* safetensors.cpp */, 00000000000000000000000B /* tokenizer.cpp */, 00000000000000000000000C /* ops.cpp */, 00000000000000000000000D /* attention.cpp */, 00000000000000000000000E /* mlp.cpp */, 00000000000000000000000F /* transformer_block.cpp */, 000000000000000000000010 /* model.cpp */, 000000000000000000000011 /* binary_packer.h */, 000000000000000000000012 /* common.h */, 000000000000000000000013 /* linear.h */, 000000000000000000000014 /* safetensors.h */, 000000000000000000000015 /* tokenizer.h */, 000000000000000000000016 /* ops.h */, 000000000000000000000017 /* attention.h */, 000000000000000000000018 /* mlp.h */, 000000000000000000000019 /* transformer_block.h */, 00000000000000000000001A /* model.h */, 00000000000000000000001B /* unicode_ranges.h */, 00000000000000000000001C /* json.hpp */,
 			);
 			sourceTree = "<group>";
 			path = ".";
 		};
-		000000000000000000000026 /* Tests */ = {
+		000000000000000000000027 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
-				00000000000000000000001F /* EngineSmokeTests.swift */,
+				000000000000000000000020 /* EngineSmokeTests.swift */,
 			);
 			sourceTree = "<group>";
 			path = "ios/LittleBitLoaderTests";
 		};
-		000000000000000000000027 /* Frameworks */ = {
+		000000000000000000000028 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000020 /* Foundation.framework */, 000000000000000000000021 /* XCTest.framework */,
+				000000000000000000000021 /* Foundation.framework */, 000000000000000000000022 /* XCTest.framework */,
 			);
 			sourceTree = "<group>";
 		};
-		000000000000000000000028 /* Products */ = {
+		000000000000000000000029 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000022 /* LittleBitLoader.app */, 000000000000000000000023 /* LittleBitLoaderTests.xctest */,
+				000000000000000000000023 /* LittleBitLoader.app */, 000000000000000000000024 /* LittleBitLoaderTests.xctest */,
 			);
 			sourceTree = "<group>";
 		};
-		000000000000000000000029 /*  */ = {
+		00000000000000000000002A /*  */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000024 /* App */, 000000000000000000000025 /* Engine */, 000000000000000000000026 /* Tests */, 000000000000000000000027 /* Frameworks */, 000000000000000000000028 /* Products */,
+				000000000000000000000025 /* App */, 000000000000000000000026 /* Engine */, 000000000000000000000027 /* Tests */, 000000000000000000000028 /* Frameworks */, 000000000000000000000029 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		00000000000000000000002D /* Sources */ = {
+		00000000000000000000002E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				00000000000000000000002E /* LittleBitLoaderApp.swift in Sources */,
-				00000000000000000000002F /* LittleBitEngine.swift in Sources */,
-				000000000000000000000030 /* HomeView.swift in Sources */,
-				000000000000000000000031 /* ModelManagerView.swift in Sources */,
-				000000000000000000000032 /* ChatView.swift in Sources */,
-				000000000000000000000033 /* PerformanceMonitorView.swift in Sources */,
-				000000000000000000000034 /* LittleBitEngineBridge.mm in Sources */,
-				000000000000000000000035 /* binary_packer.cpp in Sources */,
-				000000000000000000000036 /* linear.cpp in Sources */,
-				000000000000000000000037 /* safetensors.cpp in Sources */,
-				000000000000000000000038 /* tokenizer.cpp in Sources */,
-				000000000000000000000039 /* ops.cpp in Sources */,
-				00000000000000000000003A /* attention.cpp in Sources */,
-				00000000000000000000003B /* mlp.cpp in Sources */,
-				00000000000000000000003C /* transformer_block.cpp in Sources */,
-				00000000000000000000003D /* model.cpp in Sources */,
+				00000000000000000000002F /* LittleBitLoaderApp.swift in Sources */,
+				000000000000000000000030 /* LittleBitEngine.swift in Sources */,
+				000000000000000000000031 /* HomeView.swift in Sources */,
+				000000000000000000000032 /* ModelManagerView.swift in Sources */,
+				000000000000000000000033 /* ChatView.swift in Sources */,
+				000000000000000000000034 /* PerformanceMonitorView.swift in Sources */,
+				000000000000000000000035 /* LittleBitEngineBridge.mm in Sources */,
+				000000000000000000000036 /* binary_packer.cpp in Sources */,
+				000000000000000000000037 /* linear.cpp in Sources */,
+				000000000000000000000038 /* safetensors.cpp in Sources */,
+				000000000000000000000039 /* tokenizer.cpp in Sources */,
+				00000000000000000000003A /* ops.cpp in Sources */,
+				00000000000000000000003B /* attention.cpp in Sources */,
+				00000000000000000000003C /* mlp.cpp in Sources */,
+				00000000000000000000003D /* transformer_block.cpp in Sources */,
+				00000000000000000000003E /* model.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		00000000000000000000003E /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				00000000000000000000002A /* in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		00000000000000000000003F /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		000000000000000000000040 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				000000000000000000000041 /* LittleBitEngine.swift in Sources */,
-				000000000000000000000042 /* HomeView.swift in Sources */,
-				000000000000000000000043 /* ModelManagerView.swift in Sources */,
-				000000000000000000000044 /* ChatView.swift in Sources */,
-				000000000000000000000045 /* PerformanceMonitorView.swift in Sources */,
-				000000000000000000000046 /* EngineSmokeTests.swift in Sources */,
-				000000000000000000000047 /* LittleBitEngineBridge.mm in Sources */,
-				000000000000000000000048 /* binary_packer.cpp in Sources */,
-				000000000000000000000049 /* linear.cpp in Sources */,
-				00000000000000000000004A /* safetensors.cpp in Sources */,
-				00000000000000000000004B /* tokenizer.cpp in Sources */,
-				00000000000000000000004C /* ops.cpp in Sources */,
-				00000000000000000000004D /* attention.cpp in Sources */,
-				00000000000000000000004E /* mlp.cpp in Sources */,
-				00000000000000000000004F /* transformer_block.cpp in Sources */,
-				000000000000000000000050 /* model.cpp in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		000000000000000000000051 /* Frameworks */ = {
+		00000000000000000000003F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				00000000000000000000002B /* in Frameworks */,
-				00000000000000000000002C /* in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		000000000000000000000052 /* Resources */ = {
+		000000000000000000000040 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		000000000000000000000057 /* LittleBitLoader */ = {
+		000000000000000000000041 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000042 /* LittleBitEngine.swift in Sources */,
+				000000000000000000000043 /* HomeView.swift in Sources */,
+				000000000000000000000044 /* ModelManagerView.swift in Sources */,
+				000000000000000000000045 /* ChatView.swift in Sources */,
+				000000000000000000000046 /* PerformanceMonitorView.swift in Sources */,
+				000000000000000000000047 /* EngineSmokeTests.swift in Sources */,
+				000000000000000000000048 /* LittleBitEngineBridge.mm in Sources */,
+				000000000000000000000049 /* binary_packer.cpp in Sources */,
+				00000000000000000000004A /* linear.cpp in Sources */,
+				00000000000000000000004B /* safetensors.cpp in Sources */,
+				00000000000000000000004C /* tokenizer.cpp in Sources */,
+				00000000000000000000004D /* ops.cpp in Sources */,
+				00000000000000000000004E /* attention.cpp in Sources */,
+				00000000000000000000004F /* mlp.cpp in Sources */,
+				000000000000000000000050 /* transformer_block.cpp in Sources */,
+				000000000000000000000051 /* model.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000052 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				00000000000000000000002C /* in Frameworks */,
+				00000000000000000000002D /* in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000053 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000058 /* LittleBitLoader */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 00000000000000000000005B;
-			buildPhases = ( 00000000000000000000002D /* Sources */, 00000000000000000000003E /* Frameworks */, 00000000000000000000003F /* Resources */ );
+			buildConfigurationList = 00000000000000000000005C;
+			buildPhases = ( 00000000000000000000002E /* Sources */, 00000000000000000000003F /* Frameworks */, 000000000000000000000040 /* Resources */ );
 			buildRules = ( );
 			dependencies = ( );
 			name = LittleBitLoader;
 			productName = LittleBitLoader;
-			productReference = 000000000000000000000022 /* LittleBitLoader.app */;
+			productReference = 000000000000000000000023 /* LittleBitLoader.app */;
 			productType = "com.apple.product-type.application";
 		};
-		000000000000000000000058 /* LittleBitLoaderTests */ = {
+		000000000000000000000059 /* LittleBitLoaderTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 00000000000000000000005C;
-			buildPhases = ( 000000000000000000000040 /* Sources */, 000000000000000000000051 /* Frameworks */, 000000000000000000000052 /* Resources */ );
+			buildConfigurationList = 00000000000000000000005D;
+			buildPhases = ( 000000000000000000000041 /* Sources */, 000000000000000000000052 /* Frameworks */, 000000000000000000000053 /* Resources */ );
 			buildRules = ( );
-			dependencies = ( 000000000000000000000059 /* PBXTargetDependency */ );
+			dependencies = ( 00000000000000000000005A /* PBXTargetDependency */ );
 			name = LittleBitLoaderTests;
 			productName = LittleBitLoaderTests;
-			productReference = 000000000000000000000023 /* LittleBitLoaderTests.xctest */;
+			productReference = 000000000000000000000024 /* LittleBitLoaderTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		000000000000000000000059 /* PBXTargetDependency */ = {
+		00000000000000000000005A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 000000000000000000000057 /* LittleBitLoader */;
-			targetProxy = 00000000000000000000005A;
+			target = 000000000000000000000058 /* LittleBitLoader */;
+			targetProxy = 00000000000000000000005B;
 		};
-		00000000000000000000005A /* PBXContainerItemProxy */ = {
+		00000000000000000000005B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = 00000000000000000000005D;
+			containerPortal = 00000000000000000000005E;
 			proxyType = 1;
-			remoteGlobalIDString = 000000000000000000000057;
+			remoteGlobalIDString = 000000000000000000000058;
 			remoteInfo = LittleBitLoader;
-		};
-		000000000000000000000053 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CLANG_CXX_LANGUAGE_STANDARD = c++17;
-				CLANG_CXX_LIBRARY = libc++;
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				GCC_PRECOMPILE_PREFIX_HEADER = NO;
-				HEADER_SEARCH_PATHS = ( "$(inherited)", "$(SRCROOT)/include", "$(SRCROOT)", "$(SRCROOT)/ios/LittleBitLoader/Bridge" );
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				OTHER_CPLUSPLUSFLAGS = ( "$(inherited)", "-O3" );
-				SDKROOT = iphoneos;
-				SWIFT_OBJC_BRIDGING_HEADER = "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				ARCHS[sdk=iphoneos*] = arm64;
-				CODE_SIGN_STYLE = Automatic;
-				ENABLE_TESTABILITY = YES;
-				INFOPLIST_FILE = "ios/LittleBitLoader/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;
-				PRODUCT_NAME = LittleBitLoader;
-			};
-			name = Debug;
 		};
 		000000000000000000000054 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -267,7 +244,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				OTHER_CPLUSPLUSFLAGS = ( "$(inherited)", "-O3" );
 				SDKROOT = iphoneos;
-				SWIFT_OBJC_BRIDGING_HEADER = "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				ARCHS[sdk=iphoneos*] = arm64;
@@ -277,7 +254,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;
 				PRODUCT_NAME = LittleBitLoader;
 			};
-			name = Release;
+			name = Debug;
 		};
 		000000000000000000000055 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -291,14 +268,17 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				OTHER_CPLUSPLUSFLAGS = ( "$(inherited)", "-O3" );
 				SDKROOT = iphoneos;
-				SWIFT_OBJC_BRIDGING_HEADER = "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				ARCHS[sdk=iphoneos*] = arm64;
 				CODE_SIGN_STYLE = Automatic;
-				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader.tests;
-				PRODUCT_NAME = LittleBitLoaderTests;
+				ENABLE_TESTABILITY = YES;
+				INFOPLIST_FILE = "ios/LittleBitLoader/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;
+				PRODUCT_NAME = LittleBitLoader;
 			};
-			name = Debug;
+			name = Release;
 		};
 		000000000000000000000056 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -312,7 +292,28 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				OTHER_CPLUSPLUSFLAGS = ( "$(inherited)", "-O3" );
 				SDKROOT = iphoneos;
-				SWIFT_OBJC_BRIDGING_HEADER = "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader.tests;
+				PRODUCT_NAME = LittleBitLoaderTests;
+			};
+			name = Debug;
+		};
+		000000000000000000000057 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = c++17;
+				CLANG_CXX_LIBRARY = libc++;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				GCC_PRECOMPILE_PREFIX_HEADER = NO;
+				HEADER_SEARCH_PATHS = ( "$(inherited)", "$(SRCROOT)/include", "$(SRCROOT)", "$(SRCROOT)/ios/LittleBitLoader/Bridge" );
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				OTHER_CPLUSPLUSFLAGS = ( "$(inherited)", "-O3" );
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				CODE_SIGN_STYLE = Automatic;
@@ -321,48 +322,48 @@
 			};
 			name = Release;
 		};
-		00000000000000000000005B /* Build configuration list for PBXNativeTarget "LittleBitLoader" */ = {
+		00000000000000000000005C /* Build configuration list for PBXNativeTarget "LittleBitLoader" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = ( 000000000000000000000053 /* Debug */, 000000000000000000000054 /* Release */ );
+			buildConfigurations = ( 000000000000000000000054 /* Debug */, 000000000000000000000055 /* Release */ );
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		00000000000000000000005C /* Build configuration list for PBXNativeTarget "LittleBitLoaderTests" */ = {
+		00000000000000000000005D /* Build configuration list for PBXNativeTarget "LittleBitLoaderTests" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = ( 000000000000000000000055 /* Debug */, 000000000000000000000056 /* Release */ );
+			buildConfigurations = ( 000000000000000000000056 /* Debug */, 000000000000000000000057 /* Release */ );
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		00000000000000000000005D /* Project object */ = {
+		00000000000000000000005E /* Project object */ = {
 			isa = PBXProject;
 			attributes = { LastUpgradeCheck = 1500; };
-			buildConfigurationList = 00000000000000000000005E;
+			buildConfigurationList = 00000000000000000000005F;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = ( en, ar );
-			mainGroup = 000000000000000000000029;
-			productRefGroup = 000000000000000000000028 /* Products */;
+			mainGroup = 00000000000000000000002A;
+			productRefGroup = 000000000000000000000029 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = ( 000000000000000000000057 /* LittleBitLoader */, 000000000000000000000058 /* LittleBitLoaderTests */ );
+			targets = ( 000000000000000000000058 /* LittleBitLoader */, 000000000000000000000059 /* LittleBitLoaderTests */ );
 		};
-		00000000000000000000005E /* Build configuration list for PBXProject "LittleBitLoader" */ = {
+		00000000000000000000005F /* Build configuration list for PBXProject "LittleBitLoader" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = ( 00000000000000000000005F, 000000000000000000000060 );
+			buildConfigurations = ( 000000000000000000000060, 000000000000000000000061 );
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		00000000000000000000005F /* Debug */ = {
+		000000000000000000000060 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = iphoneos; };
 			name = Debug;
 		};
-		000000000000000000000060 /* Release */ = {
+		000000000000000000000061 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = iphoneos; };
 			name = Release;
 		};
 	};
-	rootObject = 00000000000000000000005D /* Project object */;
+	rootObject = 00000000000000000000005E /* Project object */;
 }

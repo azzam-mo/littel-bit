@@ -68,7 +68,24 @@ add_custom_command(
 )
 add_custom_target(tiny_model_fixture DEPENDS "${TINY_MODEL_DIR}/model.safetensors")
 
+# Structural check of the generated Xcode project (no macOS/Xcode required).
+add_test(NAME check_xcode_project
+         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_xcode_project.py")
+
 add_executable(test_model_inference tests/test_model_inference.cpp)
 add_dependencies(test_model_inference tiny_model_fixture)
 target_link_libraries(test_model_inference PRIVATE littlebit_engine)
 add_test(NAME test_model_inference COMMAND test_model_inference "${TINY_MODEL_DIR}")
+
+# Standalone probes for validating real weights / tokenizer against independent references.
+add_executable(model_probe tests/model_probe.cpp)
+target_link_libraries(model_probe PRIVATE littlebit_engine)
+
+add_executable(tokenizer_probe tests/tokenizer_probe.cpp)
+target_link_libraries(tokenizer_probe PRIVATE littlebit_engine)
+
+add_executable(logits_probe tests/logits_probe.cpp)
+target_link_libraries(logits_probe PRIVATE littlebit_engine)
+
+add_executable(real_model_smoke tests/real_model_smoke.cpp)
+target_link_libraries(real_model_smoke PRIVATE littlebit_engine)

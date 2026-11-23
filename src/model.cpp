@@ -89,10 +89,16 @@ bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t n
         return false;
     }
 
-    // 2. Load Tokenizer — required for correct text I/O, do not silently continue.
+    // 2. Load Tokenizer — prefer the official tokenizer.json because it contains
+    // merge ranks and added tokens that vocab.json/merges.txt can omit.
+    std::string tokenizer_json_path = model_dir + "/tokenizer.json";
     std::string vocab_path = model_dir + "/vocab.json";
     std::string merges_path = model_dir + "/merges.txt";
-    if (!tokenizer.load(vocab_path, merges_path)) {
+    bool tokenizer_ok = tokenizer.load_from_json(tokenizer_json_path);
+    if (!tokenizer_ok) {
+        tokenizer_ok = tokenizer.load(vocab_path, merges_path);
+    }
+    if (!tokenizer_ok) {
         std::cerr << "[MODEL] Error: Tokenizer files not found or invalid in " << model_dir << std::endl;
         return false;
     }

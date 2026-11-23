@@ -57,7 +57,18 @@
 - اختبار مسار كامل على Linux عبر نموذج صناعي صغير (`tests/make_tiny_model.py` + `tests/test_model_inference`) يشمل prefill وتدفقًا وإيقافًا مبكرًا.
 - توثيق كامل في `docs/phase7-ios-readiness.md` لما تم التحقق منه وما يحتاج macOS/جهازًا حقيقيًا.
 
-### نتائج الاختبارات (100% نجاح لكافة الاختبارات السبعة):
+### المرحلة الثامنة: Real Model Validation
+- استُخدم نموذج حقيقي محلي (`littlebit-qwen3-8b-0.55bpw`، 2.76GiB، 4935 tensor) دون أي أوزان وهمية.
+- `config.json` يطابق `ModelConfig` في الحقول العشرة الرئيسية؛ 4431 تنسورًا مطلوبًا موجودة و لا مفقود؛ جداول التضمين/rأس اللغة BF16 بالأبعاد الصحيحة.
+- تحققت صحة ترتيب LittleBit-2 (المسار الأساسي + المتبقي) بمقارنة C++ مع مرجع NumPy مستقل: خطأ نسبي ~1.1e-6.
+- مقارنة لوغاريتمات كاملة على الـ36 طبقة مقابل مرجع مبني على `transformers v4.51.3`: `max_rel=3.56e-6`، نفس top-1 وتطابق top-5 بالكامل.
+- Tokenizer: تحميل `tokenizer.json` الرسمي (يحتوي 96 دمجًا ناقصة في `merges.txt`)، تطبيق pre-tokenizer الخاص بـ Qwen3 ورموز `added_tokens`؛ 11/11 عينة تطابقت مع مكتبة Hugging Face `tokenizers` (عربي/إنجليزي/أرقام/رموز/قالب محادثة).
+- توليد حقيقي ناجح على النموذج الكامل مع لوغاريتمات منتهية، مع توثيق عائق الأداء (`ttft≈158s`، `0.015 tok/s` على CPU اللينكس).
+- ميزانية الذاكرة: 288KiB/token للـ KV، 144MiB عند 512 و288MiB عند 1024؛ RSS بعد التحميل ~1011MiB وبعد التوليد ~2330MiB؛ لا افتراض بقدرة iPhone 13 على أي حجم.
+- Xcode: تحقق إنشائي (`scripts/check_xcode_project.py`)؛ Deployment iOS 16، arm64، bridging header، Automatic signing مع إمكانية تمرير `DEVELOPMENT_TEAM`.
+- توثيق كامل في `docs/phase8-real-model-validation.md`. لم يُبدأ أي نقل منصات قبل إثبات صحة المحرك.
+
+### نتائج الاختبارات (100% نجاح لكافة الاختبارات الثمانية):
 1. `test_binary_packer`: نجح.
 2. `test_littlebit_linear`: نجح.
 3. `test_safetensors`: نجح.
@@ -65,3 +76,4 @@
 5. `test_ops`: نجح.
 6. `test_transformer_block`: نجح.
 7. `test_model_inference`: نجح (مسار استدلال كامل + تدفق + إيقاف مبكر).
+8. `check_xcode_project`: نجح (فحص إنشائي فقط؛ لا يعني بناءً على macOS).
