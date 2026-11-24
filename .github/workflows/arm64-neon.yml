@@ -2,9 +2,9 @@ name: LittleBit ARM64 NEON CI
 
 on:
   push:
-    branches: [ "main", "dev", "phase11-neon-binary-matvec" ]
+    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants" ]
   pull_request:
-    branches: [ "main", "dev", "phase11-neon-binary-matvec" ]
+    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants" ]
   workflow_dispatch:
 
 jobs:
@@ -63,7 +63,7 @@ jobs:
         if [ -x build-arm64/test_binary_packer ]; then
           build-arm64/test_binary_packer > test7.log 2>&1
           code=$?
-          grep -E 'Test 7|NEON MISMATCH|All binary_packer' test7.log || true
+          grep -E 'Test 7|NEON VARIANT MISMATCH|All binary_packer' test7.log || true
           line=$(grep -E 'Test 7:' test7.log | tail -1 || true)
           if printf '%s' "$line" | grep -q 'bit-exact'; then result=PASS; else result=FAIL; fi
           cases=$(printf '%s' "$line" | sed -n 's/.*(\([0-9][0-9]*\) shape\/pattern cases).*/\1/p')
@@ -86,30 +86,64 @@ jobs:
       if: always()
       run: |
         set -e
-        cat > "$RUNNER_TEMP/neon_bench.cpp" <<'CPP'
+        cat > "$RUNNER_TEMP/neon_variants_bench.cpp" <<'CPP'
         #include "littlebit/binary_packer.h"
+        #include "littlebit/binary_packer_neon_variants_internal.h"
         #include "littlebit/scalar_kernels.h"
 
         #include <algorithm>
         #include <chrono>
+        #include <cmath>
         #include <cstdint>
         #include <cstring>
         #include <iomanip>
         #include <iostream>
+        #include <numeric>
+        #include <sstream>
+        #include <string>
         #include <vector>
 
         using Clock = std::chrono::steady_clock;
+        using MatvecFn = void (*)(const int32_t*, const float*, float*, size_t, size_t);
 
         struct Shape { const char* name; size_t M; size_t K; };
+        struct Kernel { const char* name; MatvecFn fn; };
+        struct Stats { double median_ms = 0.0; double cv = 0.0; };
 
         static uint32_t next_rand(uint32_t& s) {
             s = s * 1664525u + 1013904223u;
             return s;
         }
 
-        static double median(std::vector<double> v) {
+        static bool same_float_bits(float a, float b) {
+            uint32_t ua = 0, ub = 0;
+            std::memcpy(&ua, &a, sizeof(ua));
+            std::memcpy(&ub, &b, sizeof(ub));
+            return ua == ub;
+        }
+
+        static Stats make_stats(std::vector<double> v) {
             std::sort(v.begin(), v.end());
-            return v[v.size() / 2];
+            const double median_ms = v[v.size() / 2];
+            const double mean = std::accumulate(v.begin(), v.end(), 0.0) / v.size();
+            if (mean <= 0.0 || v.size() < 2) return {median_ms, 0.0};
+            double sq = 0.0;
+            for (double x : v) sq += (x - mean) * (x - mean);
+            const double sd = std::sqrt(sq / (v.size() - 1));
+            return {median_ms, sd / mean};
+        }
+
+        static std::string cell(const Stats& s) {
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(3) << s.median_ms
+                << " (CV " << std::setprecision(1) << s.cv * 100.0 << "%)";
+            return oss.str();
+        }
+
+        static void scalar_fn(
+            const int32_t* a, const float* x, float* y, size_t M, size_t K
+        ) {
+            littlebit::detail::scalar_binary_matvec(a, x, y, M, K);
         }
 
         int main() {
@@ -122,90 +156,284 @@ jobs:
                 {"down.V",   824, 12288}, {"down.U",   4096,   824},
                 {"down.V_R", 824, 12288}, {"down.U_R", 4096,   824},
             };
-            constexpr int repeats = 11;
+            const Kernel kernels[] = {
+                {"scalar",    scalar_fn},
+                {"NEON4",     littlebit::binary_matvec_mult_neon},
+                {"NEON8",     littlebit::bench::neon_variant_8},
+                {"NEON16",    littlebit::bench::neon_variant_16},
+                {"NEON32",    littlebit::bench::neon_variant_32},
+                {"vtst4",     littlebit::bench::neon_variant_vtst},
+                {"prefetch32",littlebit::bench::neon_variant_prefetch},
+            };
+
+            constexpr int rounds = 3;
+            constexpr int reps_per_round = 11;
+            constexpr int warmups = 2;
+            const size_t nshapes = sizeof(shapes) / sizeof(shapes[0]);
+            const size_t nkernels = sizeof(kernels) / sizeof(kernels[0]);
 
             std::cout << "NEON_AVAILABLE=" << (littlebit::neon_available() ? 1 : 0) << '\n';
+            std::cout << "BENCH_PROTOCOL=warmups=2 rounds=3 reps_per_round=11 interleaved_kernels=yes\n";
 
+            std::vector<std::vector<Stats>> results(nshapes, std::vector<Stats>(nkernels));
+            size_t parity_failures = 0;
             bool dispatch_ok = true;
-            std::vector<double> speedups;
-            std::cout << "| Shape | M | K | scalar ms | NEON ms | median speedup |\n";
-            std::cout << "|---|---:|---:|---:|---:|---:|\n";
 
-            for (const auto& sh : shapes) {
+            std::cout << "| Shape | M | K";
+            for (const Kernel& k : kernels) std::cout << " | " << k.name << " ms (CV)";
+            std::cout << " | parity |\n|---";
+            for (size_t i = 0; i < nkernels + 3; ++i) std::cout << "|---:";
+            std::cout << "|:---:|\n";
+
+            for (size_t si = 0; si < nshapes; ++si) {
+                const Shape& sh = shapes[si];
                 const size_t words = (sh.K + 31) / 32;
                 uint32_t seed = 0x9e3779b9u ^ static_cast<uint32_t>(sh.M * 131u + sh.K);
+
                 std::vector<int32_t> packed(sh.M * words);
                 for (auto& w : packed) w = static_cast<int32_t>(next_rand(seed));
+
                 std::vector<float> x(sh.K);
                 for (size_t i = 0; i < sh.K; ++i) {
                     x[i] = static_cast<float>(next_rand(seed) % 65537u) / 4096.0f - 8.0f;
                 }
 
-                std::vector<float> y_s(sh.M), y_n(sh.M), y_d(sh.M);
-                littlebit::detail::scalar_binary_matvec(packed.data(), x.data(), y_s.data(), sh.M, sh.K);
-                littlebit::binary_matvec_mult_neon(packed.data(), x.data(), y_n.data(), sh.M, sh.K);
-                littlebit::binary_matvec_mult(packed.data(), x.data(), y_d.data(), sh.M, sh.K);
+                std::vector<std::vector<float>> outputs(nkernels, std::vector<float>(sh.M));
+                kernels[0].fn(packed.data(), x.data(), outputs[0].data(), sh.M, sh.K);
 
-                bool bit_exact = true;
+                bool shape_parity_ok = true;
+                for (size_t ki = 1; ki < nkernels; ++ki) {
+                    kernels[ki].fn(packed.data(), x.data(), outputs[ki].data(), sh.M, sh.K);
+                    bool kernel_ok = true;
+                    for (size_t i = 0; i < sh.M; ++i) {
+                        if (!same_float_bits(outputs[0][i], outputs[ki][i])) {
+                            kernel_ok = false;
+                        }
+                    }
+                    if (!kernel_ok) {
+                        ++parity_failures;
+                        shape_parity_ok = false;
+                        std::cerr << "PARITY FAIL shape=" << sh.name
+                                  << " kernel=" << kernels[ki].name << '\n';
+                    }
+                }
+
+                std::vector<float> y_dispatch(sh.M);
+                littlebit::binary_matvec_mult(packed.data(), x.data(), y_dispatch.data(), sh.M, sh.K);
                 for (size_t i = 0; i < sh.M; ++i) {
-                    uint32_t a = 0, b = 0, c = 0;
-                    std::memcpy(&a, &y_s[i], sizeof(a));
-                    std::memcpy(&b, &y_n[i], sizeof(b));
-                    std::memcpy(&c, &y_d[i], sizeof(c));
-                    if (a != b) bit_exact = false;
-                    if (a != c) dispatch_ok = false;
+                    if (!same_float_bits(outputs[0][i], y_dispatch[i])) dispatch_ok = false;
                 }
-                if (!bit_exact) {
-                    std::cerr << "NEON bit mismatch for " << sh.name << '\n';
-                    return 1;
+                if (!dispatch_ok) {
+                    std::cerr << "DISPATCH MISMATCH shape=" << sh.name << '\n';
                 }
 
-                std::vector<double> ts, tn;
+                for (size_t ki = 0; ki < nkernels; ++ki) {
+                    for (int w = 0; w < warmups; ++w) {
+                        kernels[ki].fn(packed.data(), x.data(), outputs[ki].data(), sh.M, sh.K);
+                    }
+                }
+
+                std::vector<std::vector<double>> samples(nkernels);
                 volatile float sink = 0.0f;
-                for (int r = 0; r < repeats; ++r) {
-                    auto t0 = Clock::now();
-                    littlebit::detail::scalar_binary_matvec(packed.data(), x.data(), y_s.data(), sh.M, sh.K);
-                    auto t1 = Clock::now();
-                    ts.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
-
-                    t0 = Clock::now();
-                    littlebit::binary_matvec_mult_neon(packed.data(), x.data(), y_n.data(), sh.M, sh.K);
-                    t1 = Clock::now();
-                    tn.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
-                    sink += y_n[0];
+                for (int round = 0; round < rounds; ++round) {
+                    for (int rep = 0; rep < reps_per_round; ++rep) {
+                        for (size_t ki = 0; ki < nkernels; ++ki) {
+                            const auto t0 = Clock::now();
+                            kernels[ki].fn(packed.data(), x.data(), outputs[ki].data(), sh.M, sh.K);
+                            const auto t1 = Clock::now();
+                            samples[ki].push_back(
+                                std::chrono::duration<double, std::milli>(t1 - t0).count()
+                            );
+                            sink += outputs[ki][0];
+                        }
+                    }
                 }
                 (void)sink;
 
-                const double scalar_ms = median(ts);
-                const double neon_ms = median(tn);
-                const double speedup = neon_ms > 0.0 ? scalar_ms / neon_ms : 0.0;
-                speedups.push_back(speedup);
+                for (size_t ki = 0; ki < nkernels; ++ki) {
+                    results[si][ki] = make_stats(samples[ki]);
+                }
 
-                std::cout << "| " << sh.name << " | " << sh.M << " | " << sh.K << " | "
-                          << std::fixed << std::setprecision(4) << scalar_ms << " | "
-                          << neon_ms << " | " << std::setprecision(2) << speedup << "x |\n";
+                std::cout << "| " << sh.name << " | " << sh.M << " | " << sh.K << " |";
+                for (size_t ki = 0; ki < nkernels; ++ki) {
+                    std::cout << " " << cell(results[si][ki]) << " |";
+                }
+                std::cout << " " << (shape_parity_ok ? "OK" : "FAIL") << " |\n";
             }
 
+            std::vector<Stats> overall(nkernels);
+            for (size_t ki = 0; ki < nkernels; ++ki) {
+                std::vector<double> medians, cvs;
+                for (size_t si = 0; si < nshapes; ++si) {
+                    medians.push_back(results[si][ki].median_ms);
+                    cvs.push_back(results[si][ki].cv);
+                }
+                overall[ki] = make_stats(medians);
+                overall[ki].cv = *std::max_element(cvs.begin(), cvs.end());
+            }
+
+            const double scalar_overall = overall[0].median_ms;
+            const double neon4_overall = overall[1].median_ms;
+            bool any_cv_high = false;
+            for (const Stats& s : overall) {
+                if (s.cv > 0.05) any_cv_high = true;
+            }
+
+            std::cout << "\n| Overall | median ms | speedup vs scalar | speedup vs NEON4 | max CV | verdict |\n";
+            std::cout << "|---|---:|---:|---:|---:|:---:|\n";
+            for (size_t ki = 0; ki < nkernels; ++ki) {
+                const double vs_scalar = overall[ki].median_ms > 0.0
+                    ? scalar_overall / overall[ki].median_ms : 0.0;
+                const double vs_neon4 = overall[ki].median_ms > 0.0
+                    ? neon4_overall / overall[ki].median_ms : 0.0;
+
+                std::string verdict = "baseline";
+                if (ki > 1) {
+                    const double threshold = 1.0 + 3.0 * std::sqrt(
+                        overall[ki].cv * overall[ki].cv + overall[1].cv * overall[1].cv
+                    );
+                    const bool accepted = vs_neon4 > threshold && vs_neon4 > 1.05;
+                    verdict = any_cv_high ? "INCONCLUSIVE" : (accepted ? "ACCEPT" : "REJECT");
+                    std::cout << "ACCEPT_" << kernels[ki].name << "=" << verdict
+                              << " ratio=" << std::fixed << std::setprecision(3) << vs_neon4
+                              << " threshold=" << threshold << '\n';
+                }
+
+                std::cout << "| " << kernels[ki].name << " | " << std::setprecision(3)
+                          << overall[ki].median_ms << " | " << std::setprecision(2) << vs_scalar
+                          << "x | " << vs_neon4 << "x | " << std::fixed << std::setprecision(1)
+                          << overall[ki].cv * 100.0 << "% | " << verdict << " |\n";
+            }
+
+            std::string bench_verdict = "OK";
+            if (parity_failures != 0 || !dispatch_ok) bench_verdict = "FAIL";
+            else if (any_cv_high) bench_verdict = "INCONCLUSIVE";
+
+            std::cout << "NEON_AVAILABLE=" << (littlebit::neon_available() ? 1 : 0) << '\n';
+            std::cout << "PARITY_FAILURES=" << parity_failures << '\n';
+            std::cout << "DISPATCH_MATCHES_SCALAR=" << (dispatch_ok ? "yes" : "no") << '\n';
             std::cout << "DISPATCH_MATCHES_NEON=" << (dispatch_ok ? "yes" : "no") << '\n';
-            const double overall = median(speedups);
-            std::cout << "\nOverall median speedup: " << std::fixed << std::setprecision(2) << overall << "x\n";
-            std::cout << "| **overall** | | | | | **" << std::fixed << std::setprecision(2)
-                      << overall << "x** |\n";
-            return dispatch_ok ? 0 : 1;
+            std::cout << "MAX_CV_HIGH=" << (any_cv_high ? "yes" : "no") << '\n';
+            std::cout << "BENCH_VERDICT=" << bench_verdict << '\n';
+
+            return (parity_failures == 0 && dispatch_ok) ? 0 : 1;
         }
         CPP
 
         g++ -std=c++17 -O3 -Wall -Wextra -fno-fast-math -ffp-contract=off \
-          -Iinclude "$RUNNER_TEMP/neon_bench.cpp" build-arm64/liblittlebit_engine.a \
-          -o "$RUNNER_TEMP/neon_bench"
+          -Iinclude "$RUNNER_TEMP/neon_variants_bench.cpp" build-arm64/liblittlebit_engine.a \
+          -o "$RUNNER_TEMP/neon_variants_bench"
 
         set +e
-        "$RUNNER_TEMP/neon_bench" > bench.log 2>&1
+        "$RUNNER_TEMP/neon_variants_bench" > bench-variants.log 2>&1
         code=$?
-        cat bench.log
-        grep -E '^\|' bench.log > bench.md || true
-        grep -E '^NEON_AVAILABLE=|^DISPATCH_MATCHES_NEON=' bench.log > bench-flags.txt || true
+        cat bench-variants.log
+        grep -E '^\|' bench-variants.log > bench.md || true
+        grep -E '^(NEON_AVAILABLE|BENCH_PROTOCOL|PARITY_FAILURES|DISPATCH_MATCHES_SCALAR|DISPATCH_MATCHES_NEON|MAX_CV_HIGH|BENCH_VERDICT|ACCEPT_)=' bench-variants.log > bench-flags.txt || true
         exit $code
+
+    - name: Check ordered FP operand order in NEON disassembly
+      id: disasm
+      if: always()
+      run: |
+        set +e
+        objdump -d -C build-arm64/liblittlebit_engine.a > neon-disasm.txt 2> neon-disasm-err.txt
+        objdump_code=$?
+
+        python3 - <<'PY' > neon-disasm-check.txt 2>&1
+        import re
+        import sys
+
+        WANT = ("binary_matvec_mult_neon", "neon_variant_")
+        text = open("neon-disasm.txt", errors="replace").read()
+
+        func_re = re.compile(r"^[0-9a-fA-F]+ <(.+)>:\s*$")
+        insn_re = re.compile(r"^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]+\s+([a-z0-9]+)\s+(.*)$")
+        reg_re = re.compile(r"\bv(\d+)\b")
+
+        blocks = []
+        name = None
+        lines = []
+        for line in text.splitlines():
+            match = func_re.match(line)
+            if match:
+                if name is not None:
+                    blocks.append((name, lines))
+                name = match.group(1)
+                lines = []
+                continue
+            if name is not None:
+                lines.append(line)
+        if name is not None:
+            blocks.append((name, lines))
+
+        selected = [(n, ls) for n, ls in blocks if any(w in n for w in WANT)]
+        problems = []
+        fadd_count = 0
+        fma_count = 0
+
+        for fname, flines in selected:
+            candidates = set()
+            func_fadd = 0
+            for raw in flines:
+                match = insn_re.match(raw)
+                if not match:
+                    continue
+                op, operands = match.groups()
+                regs = [int(r) for r in reg_re.findall(operands)]
+
+                if op in ("movi", "fmov") and "#0" in operands and regs:
+                    candidates.add(regs[0])
+                elif op == "dup" and ("wzr" in operands or "#0" in operands) and regs:
+                    candidates.add(regs[0])
+                elif op == "eor" and len(regs) >= 3 and regs[1] in candidates and regs[2] in candidates:
+                    candidates.add(regs[0])
+                elif op == "mov" and len(regs) >= 2 and regs[1] in candidates:
+                    candidates.add(regs[0])
+                elif op in ("fadd", "fsub"):
+                    func_fadd += 1
+                    fadd_count += 1
+                    if len(regs) < 3:
+                        problems.append(f"{fname}: malformed {op}: {raw.strip()}")
+                        continue
+                    dst, src1, src2 = regs[0], regs[1], regs[2]
+                    if src1 not in candidates:
+                        problems.append(
+                            f"{fname}: {op} first source v{src1} is not a tracked accumulator "
+                            f"register: {raw.strip()}"
+                        )
+                    candidates.add(dst)
+                elif op.startswith("fmadd") or op.startswith("fmsub") or op.startswith("fnmadd") or op.startswith("fnmsub"):
+                    fma_count += 1
+                    problems.append(f"{fname}: forbidden fused multiply-add: {raw.strip()}")
+                elif op == "bsl" and len(regs) >= 3 and any(r in candidates for r in regs[1:3]):
+                    candidates.add(regs[0])
+
+            if func_fadd == 0:
+                problems.append(f"{fname}: no vector fadd/fsub found")
+
+        if not selected:
+            problems.append("no NEON kernel functions found in objdump output")
+        if fadd_count == 0:
+            problems.append("no fadd/fsub instructions found in NEON kernels")
+
+        print(f"DISASM_FUNCTIONS={len(selected)}")
+        print(f"DISASM_FADD_FSUB={fadd_count}")
+        print(f"DISASM_FMA={fma_count}")
+        if problems:
+            print("DISASM_CHECK=FAIL")
+            for problem in problems:
+                print("DISASM_PROBLEM=" + problem)
+            sys.exit(1)
+        print("DISASM_CHECK=PASS")
+        PY
+        check_code=$?
+
+        cat neon-disasm-check.txt
+        grep -E '^DISASM_(FUNCTIONS|FADD_FSUB|FMA|CHECK)=' neon-disasm-check.txt > disasm-flags.txt || true
+
+        if [ $objdump_code -ne 0 ]; then exit $objdump_code; fi
+        exit $check_code
 
     - name: Write job summary
       if: always()
@@ -215,11 +443,16 @@ jobs:
           echo
           echo "- Runner arch: \`$(uname -m)\`"
           echo "- Compiler: \`$(g++ --version | head -1)\`"
-          echo "- NEON available: \`$(grep '^NEON_AVAILABLE=' bench-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          echo "- NEON available: \`$(grep '^NEON_AVAILABLE=' bench-flags.txt 2>/dev/null | tail -1 | cut -d= -f2 || echo unknown)\`"
           echo "- NEON dispatch matches scalar oracle: \`$(grep '^DISPATCH_MATCHES_NEON=' bench-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
           echo "- ctest (NEON enabled): ${{ steps.ctest_neon.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_neon.outputs.code || 'n/a' }}\`)"
           echo "- ctest (NEON disabled): ${{ steps.ctest_scalar.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_scalar.outputs.code || 'n/a' }}\`)"
           echo "- Test 7 raw-bit parity: ${{ steps.test7.outputs.result || 'unknown' }} (${{ steps.test7.outputs.cases || '0' }} cases)"
+          echo "- Ordered FP disassembly check: \`$(grep '^DISASM_CHECK=' disasm-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          echo
+          echo "### Benchmark acceptance"
+          echo
+          if [ -s bench-flags.txt ]; then grep -E '^(BENCH_PROTOCOL|PARITY_FAILURES|MAX_CV_HIGH|BENCH_VERDICT|ACCEPT_)=' bench-flags.txt | sed 's/^/- /'; else echo "- _benchmark flags unavailable_"; fi
           echo
           echo "### Binary matvec microbenchmark"
           echo
@@ -237,9 +470,13 @@ jobs:
           ctest-neon.log
           ctest-scalar.log
           test7.log
-          bench.log
+          bench-variants.log
           bench.md
           bench-flags.txt
+          neon-disasm.txt
+          neon-disasm-err.txt
+          neon-disasm-check.txt
+          disasm-flags.txt
         if-no-files-found: warn
 
   x86-regression:

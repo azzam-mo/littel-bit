@@ -1,4 +1,7 @@
 #include "littlebit/binary_packer.h"
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include "littlebit/binary_packer_neon_variants_internal.h"
+#endif
 #include <iostream>
 #include <cassert>
 #include <vector>
@@ -129,6 +132,10 @@ static bool candidate_matches_reference(
         -std::numeric_limits<float>::quiet_NaN(),
         avx2_test_float_from_bits(0x7fa12345u),
         avx2_test_float_from_bits(0xffa12345u),
+        avx2_test_float_from_bits(0x7fc00001u),
+        avx2_test_float_from_bits(0xffc00001u),
+        avx2_test_float_from_bits(0x7f800001u),
+        avx2_test_float_from_bits(0xff800001u),
         std::numeric_limits<float>::max(),
         -std::numeric_limits<float>::max(),
         std::numeric_limits<float>::min(),
@@ -177,6 +184,10 @@ static void check_matvec_case(size_t M, size_t K, int pattern, bool dirty_paddin
         -std::numeric_limits<float>::quiet_NaN(),
         avx2_test_float_from_bits(0x7fa12345u),
         avx2_test_float_from_bits(0xffa12345u),
+        avx2_test_float_from_bits(0x7fc00001u),
+        avx2_test_float_from_bits(0xffc00001u),
+        avx2_test_float_from_bits(0x7f800001u),
+        avx2_test_float_from_bits(0xff800001u),
         std::numeric_limits<float>::max(),
         -std::numeric_limits<float>::max(),
         std::numeric_limits<float>::min(),
@@ -372,34 +383,48 @@ int main() {
 #endif // defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
-    // Test 7: separate ARM64 NEON kernel, bit-exact against the frozen oracle.
-    // This covers 4-row lane groups, scalar tails, dirty padding bits, NaN
-    // payloads, infinities, signed zero, subnormals and non-multiple-of-32 K.
+    // Test 7: every ARM64 NEON variant, bit-exact against the frozen oracle.
+    // Covers 4/8/16/32-row groups, vtst sign handling, prefetch, scalar tails,
+    // dirty padding bits, NaN payloads, Inf, signed zeros and subnormals.
     {
+        struct Variant { const char* name; MatvecFn fn; };
+        const Variant variants[] = {
+            {"NEON4-engine", littlebit::binary_matvec_mult_neon},
+            {"NEON8", littlebit::bench::neon_variant_8},
+            {"NEON16", littlebit::bench::neon_variant_16},
+            {"NEON32", littlebit::bench::neon_variant_32},
+            {"vtst4", littlebit::bench::neon_variant_vtst},
+            {"prefetch32", littlebit::bench::neon_variant_prefetch},
+        };
+
         const size_t ks[] = {
             1, 2, 7, 31, 32, 33, 63, 64, 65, 96, 97,
             127, 128, 129, 255, 256, 257, 544, 545
         };
-        const size_t ms[] = {1, 2, 3, 4, 5, 7, 8, 9, 16, 17, 33};
+        const size_t ms[] = {1, 2, 3, 4, 5, 7, 8, 9, 16, 17, 33, 40, 41, 45, 69};
         size_t checked = 0;
         for (size_t K : ks) {
             for (size_t M : ms) {
                 for (int pattern = 0; pattern < 4; ++pattern) {
                     for (bool dirty : {false, true}) {
-                        if (!candidate_matches_reference(M, K, pattern, dirty,
-                                                         littlebit::binary_matvec_mult_neon)) {
-                            std::cerr << "NEON MISMATCH M=" << M << " K=" << K
-                                      << " pattern=" << pattern << " dirty=" << dirty << '\n';
-                            std::abort();
+                        for (const Variant& variant : variants) {
+                            if (!candidate_matches_reference(M, K, pattern, dirty,
+                                                             variant.fn)) {
+                                std::cerr << "NEON VARIANT MISMATCH [" << variant.name
+                                          << "] M=" << M << " K=" << K
+                                          << " pattern=" << pattern << " dirty=" << dirty
+                                          << '\n';
+                                std::abort();
+                            }
+                            ++checked;
                         }
-                        ++checked;
                     }
                 }
             }
         }
 
-        // LITTLEBIT_DISABLE_NEON must route the kernel through the same scalar
-        // oracle, including the final-tail path.
+        // LITTLEBIT_DISABLE_NEON must route the engine kernel through the same
+        // scalar oracle, including the final-tail path.
         setenv("LITTLEBIT_DISABLE_NEON", "1", 1);
         assert(!littlebit::neon_available());
         for (size_t K : {size_t(7), size_t(64), size_t(129), size_t(545)}) {
@@ -413,8 +438,11 @@ int main() {
         }
         unsetenv("LITTLEBIT_DISABLE_NEON");
         assert(littlebit::neon_available());
-        std::cout << "  ✓ Test 7: ARM64 NEON kernel (" << checked
-                  << " shape/pattern cases) bit-exact incl. tails and NaN payloads."
+
+        std::cout << "  ✓ Test 7: ARM64 NEON variants (" << checked
+                  << " shape/pattern cases across "
+                  << (sizeof(variants) / sizeof(variants[0]))
+                  << " kernels) bit-exact incl. tails and NaN payloads."
                   << std::endl;
     }
 #endif
