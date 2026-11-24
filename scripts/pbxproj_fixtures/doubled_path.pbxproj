@@ -1,0 +1,55 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		AAAAAAAAAAAAAAAAAAAAAAAA /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+			};
+			buildConfigurationList = BBBBBBBBBBBBBBBBBBBBBBBB;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = DDDDDDDDDDDDDDDDDDDDDDDD;
+			productRefGroup = CCCCCCCCCCCCCCCCCCCCCCCC;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+			);
+		};
+		BBBBBBBBBBBBBBBBBBBBBBBB /* Build configuration list */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CCCCCCCCCCCCCCCCCCCCCCCC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			sourceTree = "<group>";
+		};
+		DDDDDDDDDDDDDDDDDDDDDDDD /* App */ = {
+			isa = PBXGroup;
+			children = (
+				EEEEEEEEEEEEEEEEEEEEEEEE /* LittleBitLoaderApp.swift */,
+			);
+			path = ios/LittleBitLoader;
+			sourceTree = "<group>";
+		};
+		EEEEEEEEEEEEEEEEEEEEEEEE /* LittleBitLoaderApp.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "ios/LittleBitLoader/LittleBitLoaderApp.swift";
+			sourceTree = "<group>";
+		};
+	};
+	rootObject = AAAAAAAAAAAAAAAAAAAAAAAA /* Project object */;
+}

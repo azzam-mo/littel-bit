@@ -74,15 +74,14 @@ def file_type(path):
     return "text"
 
 
-def group(children, name, path=""):
+def group(children, name):
     gid = uid()
     entries = " ".join(f"{c} /* {n} */," for c, n in children)
-    path_line = f"\n\t\t\tpath = {q(path)};" if path else ""
     return gid, (
         f"\t\t{gid} /* {name} */ = {{\n"
         f"\t\t\tisa = PBXGroup;\n"
         f"\t\t\tchildren = (\n\t\t\t\t{entries}\n\t\t\t);\n"
-        f"\t\t\tsourceTree = \"<group>\";{path_line}\n"
+        f"\t\t\tsourceTree = \"<group>\";\n"
         f"\t\t}};\n"
     )
 
@@ -102,11 +101,10 @@ def main():
         fid = uid()
         file_refs[path] = fid
         name = os.path.basename(path)
-        src_tree = '<group>' if path != INFO_PLIST or True else '<group>'
         lines.append(
             f"\t\t{fid} /* {name} */ = {{isa = PBXFileReference; "
             f"lastKnownFileType = {file_type(path)}; "
-            f"path = {q(path)}; sourceTree = {q(src_tree)}; }};\n"
+            f"path = {q(path)}; sourceTree = \"<group>\"; }};\n"
         )
 
     foundation_ref = uid()
@@ -139,9 +137,9 @@ def main():
         return (file_refs[path], os.path.basename(path))
 
     app_group, app_group_def = group([ref_node(p) for p in APP_SWIFT + BRIDGE_MM + BRIDGE_HEADERS + [INFO_PLIST]],
-                                     "App", "ios/LittleBitLoader")
-    engine_group, engine_group_def = group([ref_node(p) for p in ENGINE_CPP + ENGINE_HEADERS], "Engine", ".")
-    tests_group, tests_group_def = group([ref_node(p) for p in TEST_SWIFT], "Tests", "ios/LittleBitLoaderTests")
+                                     "App")
+    engine_group, engine_group_def = group([ref_node(p) for p in ENGINE_CPP + ENGINE_HEADERS], "Engine")
+    tests_group, tests_group_def = group([ref_node(p) for p in TEST_SWIFT], "Tests")
     frameworks_group, frameworks_group_def = group(
         [(foundation_ref, "Foundation.framework"), (xctest_ref, "XCTest.framework")], "Frameworks")
     products_group, products_group_def = group(

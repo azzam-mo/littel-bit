@@ -92,7 +92,6 @@
 				000000000000000000000001 /* LittleBitLoaderApp.swift */, 000000000000000000000002 /* LittleBitEngine.swift */, 000000000000000000000003 /* HomeView.swift */, 000000000000000000000004 /* ModelManagerView.swift */, 000000000000000000000005 /* ChatView.swift */, 000000000000000000000006 /* PerformanceMonitorView.swift */, 000000000000000000000007 /* LittleBitEngineBridge.mm */, 000000000000000000000021 /* LittleBitEngineBridge.h */, 000000000000000000000022 /* LittleBitLoader-Bridging-Header.h */, 000000000000000000000023 /* Info.plist */,
 			);
 			sourceTree = "<group>";
-			path = "ios/LittleBitLoader";
 		};
 		00000000000000000000002A /* Engine */ = {
 			isa = PBXGroup;
@@ -100,7 +99,6 @@
 				000000000000000000000008 /* binary_packer.cpp */, 000000000000000000000009 /* scalar_kernels.cpp */, 00000000000000000000000A /* binary_packer_neon.cpp */, 00000000000000000000000B /* lm_head_scalar.cpp */, 00000000000000000000000C /* linear.cpp */, 00000000000000000000000D /* safetensors.cpp */, 00000000000000000000000E /* tokenizer.cpp */, 00000000000000000000000F /* ops.cpp */, 000000000000000000000010 /* attention.cpp */, 000000000000000000000011 /* mlp.cpp */, 000000000000000000000012 /* transformer_block.cpp */, 000000000000000000000013 /* model.cpp */, 000000000000000000000014 /* binary_packer.h */, 000000000000000000000015 /* common.h */, 000000000000000000000016 /* scalar_kernels.h */, 000000000000000000000017 /* linear.h */, 000000000000000000000018 /* safetensors.h */, 000000000000000000000019 /* tokenizer.h */, 00000000000000000000001A /* ops.h */, 00000000000000000000001B /* attention.h */, 00000000000000000000001C /* mlp.h */, 00000000000000000000001D /* transformer_block.h */, 00000000000000000000001E /* model.h */, 00000000000000000000001F /* unicode_ranges.h */, 000000000000000000000020 /* json.hpp */,
 			);
 			sourceTree = "<group>";
-			path = ".";
 		};
 		00000000000000000000002B /* Tests */ = {
 			isa = PBXGroup;
@@ -108,7 +106,6 @@
 				000000000000000000000024 /* EngineSmokeTests.swift */,
 			);
 			sourceTree = "<group>";
-			path = "ios/LittleBitLoaderTests";
 		};
 		00000000000000000000002C /* Frameworks */ = {
 			isa = PBXGroup;

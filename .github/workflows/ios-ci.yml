@@ -231,6 +231,8 @@ jobs:
             -sdk iphonesimulator \
             -destination "$DESTINATION" \
             -derivedDataPath "$IOS_DERIVED_DATA" \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -241,6 +243,16 @@ jobs:
           echo "BUILD_RC=$build_rc" >> "$GITHUB_ENV"
           if [ "$build_rc" -ne 0 ]; then
             echo "build-for-testing failed with rc=$build_rc" >&2
+            first_error_line="$(grep -n -m 1 -E 'error:|fatal error:' "$IOS_BUILD_LOG" | cut -d: -f1 || true)"
+            if [ -n "$first_error_line" ]; then
+              context_start=$(( first_error_line > 10 ? first_error_line - 10 : 1 ))
+              context_end=$(( first_error_line + 29 ))
+              echo "--- first build error context (lines $context_start-$context_end) ---" >&2
+              sed -n "${context_start},${context_end}p" "$IOS_BUILD_LOG" >&2
+            else
+              echo "--- first 40 lines of build log (no 'error:' line found) ---" >&2
+              sed -n '1,40p' "$IOS_BUILD_LOG" >&2
+            fi
             exit "$build_rc"
           fi
 
@@ -258,6 +270,8 @@ jobs:
             -destination "$DESTINATION" \
             -derivedDataPath "$IOS_DERIVED_DATA" \
             -resultBundlePath "$IOS_RESULT_BUNDLE" \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -364,15 +378,18 @@ jobs:
           summary_path = sys.argv[1]
           env = os.environ
 
-          log_text = ""
-          log_path = pathlib.Path(env.get("IOS_BUILD_LOG", ""))
-          if log_path.is_file():
-              log_text = log_path.read_text(encoding="utf-8", errors="replace")
-
           app_binary = pathlib.Path(
               env.get("IOS_DERIVED_DATA", ""),
               "Build/Products/Debug-iphonesimulator/LittleBitLoader.app/LittleBitLoader",
           )
+          object_dir = pathlib.Path(
+              env.get("IOS_DERIVED_DATA", ""),
+              "Build/Intermediates.noindex/LittleBitLoader.build/Debug-iphonesimulator/"
+              "LittleBitLoader.build/Objects-normal/arm64",
+          )
+          neon_object = object_dir / "binary_packer_neon.o"
+          has_neon_object = neon_object.is_file()
+
           archs = ""
           has_symbol = False
           if app_binary.is_file():
@@ -380,25 +397,33 @@ jobs:
                   ["xcrun", "lipo", "-archs", str(app_binary)],
                   check=False, capture_output=True, text=True,
               ).stdout.strip()
-              symbols = subprocess.run(
-                  ["nm", "-g", str(app_binary)],
+              thin_binary = pathlib.Path(env.get("RUNNER_TEMP", ""), "LittleBitLoader-arm64-thin")
+              thin = subprocess.run(
+                  ["xcrun", "lipo", "-thin", "arm64", str(app_binary), "-o", str(thin_binary)],
                   check=False, capture_output=True, text=True,
-              ).stdout
-              has_symbol = "neon_variant_32" in symbols
+              )
+              if thin.returncode == 0 and thin_binary.is_file():
+                  symbols = subprocess.run(
+                      ["nm", "-g", str(thin_binary)],
+                      check=False, capture_output=True, text=True,
+                  ).stdout
+                  has_symbol = "neon_variant_32" in symbols
 
-          compiled_line = (
-              "CompileC" in log_text
-              and "binary_packer_neon.cpp" in log_text
-              and "arm64" in log_text
-              and "in target 'LittleBitLoader'" in log_text
-          )
-          if compiled_line or ("arm64" in archs and has_symbol):
+          arm64_only = archs == "arm64"
+          if has_neon_object and has_symbol and arm64_only:
               neon_status = (
-                  "YES (arm64 simulator build compiled src/binary_packer_neon.cpp; "
-                  "app target contains neon_variant_32)"
+                  "YES (arm64 object binary_packer_neon.o present; "
+                  "neon_variant_32 found in arm64 app binary)"
               )
           else:
-              neon_status = "NO / NOT PROVEN (check build log and app binary)"
+              missing = []
+              if not has_neon_object:
+                  missing.append(f"missing {neon_object}")
+              if not has_symbol:
+                  missing.append("neon_variant_32 not found in arm64 app binary")
+              if not arm64_only:
+                  missing.append(f"unexpected app architectures: {archs or 'unknown'}")
+              neon_status = "NO / NOT PROVEN (" + "; ".join(missing) + ")"
 
           lines = [
               "## iOS Simulator CI",
