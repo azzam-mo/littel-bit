@@ -5,7 +5,7 @@ name: iOS Simulator CI
 # installed Xcode rather than failing before the build.
 on:
   push:
-    branches: [ "phase11-ios-ci" ]
+    branches: [ "phase11-**" ]
   pull_request:
     branches: [ "phase11-ios-ci" ]
   workflow_dispatch:
