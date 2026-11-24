@@ -27,10 +27,220 @@ jobs:
       run: cmake --build build-arm64 --config Release -j2
 
     - name: Run tests with NEON enabled
-      run: ctest --test-dir build-arm64 --output-on-failure
+      id: ctest_neon
+      run: |
+        set +e
+        ctest --test-dir build-arm64 --output-on-failure > ctest-neon.log 2>&1
+        code=$?
+        cat ctest-neon.log
+        line=$(grep -E 'tests passed|tests failed' ctest-neon.log | tail -1 || true)
+        {
+          echo "code=$code"
+          echo "summary=$line"
+        } >> "$GITHUB_OUTPUT"
+        exit $code
 
     - name: Run tests with NEON disabled (scalar fallback)
-      run: LITTLEBIT_DISABLE_NEON=1 ctest --test-dir build-arm64 --output-on-failure
+      id: ctest_scalar
+      if: always()
+      run: |
+        set +e
+        LITTLEBIT_DISABLE_NEON=1 ctest --test-dir build-arm64 --output-on-failure > ctest-scalar.log 2>&1
+        code=$?
+        cat ctest-scalar.log
+        line=$(grep -E 'tests passed|tests failed' ctest-scalar.log | tail -1 || true)
+        {
+          echo "code=$code"
+          echo "summary=$line"
+        } >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Report Test 7 (NEON raw-bit parity)
+      id: test7
+      if: always()
+      run: |
+        set +e
+        if [ -x build-arm64/test_binary_packer ]; then
+          build-arm64/test_binary_packer > test7.log 2>&1
+          code=$?
+          grep -E 'Test 7|NEON MISMATCH|All binary_packer' test7.log || true
+          line=$(grep -E 'Test 7:' test7.log | tail -1 || true)
+          if printf '%s' "$line" | grep -q 'bit-exact'; then result=PASS; else result=FAIL; fi
+          cases=$(printf '%s' "$line" | sed -n 's/.*(\([0-9][0-9]*\) shape\/pattern cases).*/\1/p')
+          if [ -z "$cases" ]; then cases=0; fi
+        else
+          code=1
+          result=UNAVAILABLE
+          cases=0
+          echo 'test_binary_packer binary not available' > test7.log
+        fi
+        {
+          echo "code=$code"
+          echo "result=$result"
+          echo "cases=$cases"
+        } >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Binary matvec microbenchmark (synthetic, 12 Phase 10 shapes)
+      id: bench
+      if: always()
+      run: |
+        set -e
+        cat > "$RUNNER_TEMP/neon_bench.cpp" <<'CPP'
+        #include "littlebit/binary_packer.h"
+        #include "littlebit/scalar_kernels.h"
+
+        #include <algorithm>
+        #include <chrono>
+        #include <cstdint>
+        #include <cstring>
+        #include <iomanip>
+        #include <iostream>
+        #include <vector>
+
+        using Clock = std::chrono::steady_clock;
+
+        struct Shape { const char* name; size_t M; size_t K; };
+
+        static uint32_t next_rand(uint32_t& s) {
+            s = s * 1664525u + 1013904223u;
+            return s;
+        }
+
+        static double median(std::vector<double> v) {
+            std::sort(v.begin(), v.end());
+            return v[v.size() / 2];
+        }
+
+        int main() {
+            // Frozen Phase 10 shapes; data is generated in-process (no model download).
+            const Shape shapes[] = {
+                {"q.V",      544,  4096}, {"q.U",      4096,   544},
+                {"q.V_R",    544,  4096}, {"q.U_R",    4096,   544},
+                {"gate.V",   824,  4096}, {"gate.U",  12288,   824},
+                {"gate.V_R", 824,  4096}, {"gate.U_R",12288,   824},
+                {"down.V",   824, 12288}, {"down.U",   4096,   824},
+                {"down.V_R", 824, 12288}, {"down.U_R", 4096,   824},
+            };
+            constexpr int repeats = 11;
+
+            std::cout << "NEON_AVAILABLE=" << (littlebit::neon_available() ? 1 : 0) << '\n';
+
+            bool dispatch_ok = true;
+            std::vector<double> speedups;
+            std::cout << "| Shape | M | K | scalar ms | NEON ms | median speedup |\n";
+            std::cout << "|---|---:|---:|---:|---:|---:|\n";
+
+            for (const auto& sh : shapes) {
+                const size_t words = (sh.K + 31) / 32;
+                uint32_t seed = 0x9e3779b9u ^ static_cast<uint32_t>(sh.M * 131u + sh.K);
+                std::vector<int32_t> packed(sh.M * words);
+                for (auto& w : packed) w = static_cast<int32_t>(next_rand(seed));
+                std::vector<float> x(sh.K);
+                for (size_t i = 0; i < sh.K; ++i) {
+                    x[i] = static_cast<float>(next_rand(seed) % 65537u) / 4096.0f - 8.0f;
+                }
+
+                std::vector<float> y_s(sh.M), y_n(sh.M), y_d(sh.M);
+                littlebit::detail::scalar_binary_matvec(packed.data(), x.data(), y_s.data(), sh.M, sh.K);
+                littlebit::binary_matvec_mult_neon(packed.data(), x.data(), y_n.data(), sh.M, sh.K);
+                littlebit::binary_matvec_mult(packed.data(), x.data(), y_d.data(), sh.M, sh.K);
+
+                bool bit_exact = true;
+                for (size_t i = 0; i < sh.M; ++i) {
+                    uint32_t a = 0, b = 0, c = 0;
+                    std::memcpy(&a, &y_s[i], sizeof(a));
+                    std::memcpy(&b, &y_n[i], sizeof(b));
+                    std::memcpy(&c, &y_d[i], sizeof(c));
+                    if (a != b) bit_exact = false;
+                    if (a != c) dispatch_ok = false;
+                }
+                if (!bit_exact) {
+                    std::cerr << "NEON bit mismatch for " << sh.name << '\n';
+                    return 1;
+                }
+
+                std::vector<double> ts, tn;
+                volatile float sink = 0.0f;
+                for (int r = 0; r < repeats; ++r) {
+                    auto t0 = Clock::now();
+                    littlebit::detail::scalar_binary_matvec(packed.data(), x.data(), y_s.data(), sh.M, sh.K);
+                    auto t1 = Clock::now();
+                    ts.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+
+                    t0 = Clock::now();
+                    littlebit::binary_matvec_mult_neon(packed.data(), x.data(), y_n.data(), sh.M, sh.K);
+                    t1 = Clock::now();
+                    tn.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+                    sink += y_n[0];
+                }
+                (void)sink;
+
+                const double scalar_ms = median(ts);
+                const double neon_ms = median(tn);
+                const double speedup = neon_ms > 0.0 ? scalar_ms / neon_ms : 0.0;
+                speedups.push_back(speedup);
+
+                std::cout << "| " << sh.name << " | " << sh.M << " | " << sh.K << " | "
+                          << std::fixed << std::setprecision(4) << scalar_ms << " | "
+                          << neon_ms << " | " << std::setprecision(2) << speedup << "x |\n";
+            }
+
+            std::cout << "DISPATCH_MATCHES_NEON=" << (dispatch_ok ? "yes" : "no") << '\n';
+            const double overall = median(speedups);
+            std::cout << "\nOverall median speedup: " << std::fixed << std::setprecision(2) << overall << "x\n";
+            std::cout << "| **overall** | | | | | **" << std::fixed << std::setprecision(2)
+                      << overall << "x** |\n";
+            return dispatch_ok ? 0 : 1;
+        }
+        CPP
+
+        g++ -std=c++17 -O3 -Wall -Wextra -fno-fast-math -ffp-contract=off \
+          -Iinclude "$RUNNER_TEMP/neon_bench.cpp" build-arm64/liblittlebit_engine.a \
+          -o "$RUNNER_TEMP/neon_bench"
+
+        set +e
+        "$RUNNER_TEMP/neon_bench" > bench.log 2>&1
+        code=$?
+        cat bench.log
+        grep -E '^\|' bench.log > bench.md || true
+        grep -E '^NEON_AVAILABLE=|^DISPATCH_MATCHES_NEON=' bench.log > bench-flags.txt || true
+        exit $code
+
+    - name: Write job summary
+      if: always()
+      run: |
+        {
+          echo "## ARM64 NEON run summary"
+          echo
+          echo "- Runner arch: \`$(uname -m)\`"
+          echo "- Compiler: \`$(g++ --version | head -1)\`"
+          echo "- NEON available: \`$(grep '^NEON_AVAILABLE=' bench-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          echo "- NEON dispatch matches scalar oracle: \`$(grep '^DISPATCH_MATCHES_NEON=' bench-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          echo "- ctest (NEON enabled): ${{ steps.ctest_neon.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_neon.outputs.code || 'n/a' }}\`)"
+          echo "- ctest (NEON disabled): ${{ steps.ctest_scalar.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_scalar.outputs.code || 'n/a' }}\`)"
+          echo "- Test 7 raw-bit parity: ${{ steps.test7.outputs.result || 'unknown' }} (${{ steps.test7.outputs.cases || '0' }} cases)"
+          echo
+          echo "### Binary matvec microbenchmark"
+          echo
+          echo "Synthetic in-process packed matrices/inputs for the 12 frozen Phase 10 shapes. No model download or real checkpoint was used."
+          echo
+          if [ -s bench.md ]; then cat bench.md; else echo "_benchmark output unavailable_"; fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload logs and benchmark output
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: arm64-neon-logs
+        path: |
+          ctest-neon.log
+          ctest-scalar.log
+          test7.log
+          bench.log
+          bench.md
+          bench-flags.txt
+        if-no-files-found: warn
 
   x86-regression:
     name: x86 Release regression
