@@ -10,6 +10,8 @@ import os
 import re
 import sys
 
+from validate_pbxproj import validate_file
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PBX = os.path.join(ROOT, "LittleBitLoader.xcodeproj", "project.pbxproj")
 PLIST = os.path.join(ROOT, "ios", "LittleBitLoader", "Info.plist")
@@ -18,6 +20,11 @@ PLIST = os.path.join(ROOT, "ios", "LittleBitLoader", "Info.plist")
 def main():
     if not os.path.isfile(PBX):
         print("Missing", PBX)
+        return 1
+    valid, message = validate_file(PBX)
+    if not valid:
+        print("[xcode] FAIL")
+        print(" -", message)
         return 1
     text = open(PBX, encoding="utf-8").read()
     failures = []
@@ -42,7 +49,7 @@ def main():
         "IPHONEOS_DEPLOYMENT_TARGET = 16.0;",
         "CODE_SIGN_STYLE = Automatic;",
         "SWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
-        "CLANG_CXX_LANGUAGE_STANDARD = c++17;",
+        "CLANG_CXX_LANGUAGE_STANDARD = \"c++17\";",
         "ARCHS[sdk=iphoneos*] = arm64;",
         "-fno-fast-math",
         "-ffp-contract=off",

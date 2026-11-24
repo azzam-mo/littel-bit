@@ -224,8 +224,8 @@ def main():
 
     development_team = os.environ.get("DEVELOPMENT_TEAM", "").strip()
     common_settings = [
-        "CLANG_CXX_LANGUAGE_STANDARD = c++17;",
-        "CLANG_CXX_LIBRARY = libc++;",
+        "CLANG_CXX_LANGUAGE_STANDARD = \"c++17\";",
+        "CLANG_CXX_LIBRARY = \"libc++\";",
         "CLANG_ENABLE_MODULES = YES;",
         "CLANG_ENABLE_OBJC_ARC = YES;",
         "GCC_PRECOMPILE_PREFIX_HEADER = NO;",
