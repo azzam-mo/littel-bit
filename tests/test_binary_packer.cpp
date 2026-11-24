@@ -423,6 +423,46 @@ int main() {
             }
         }
 
+        // Explicit controlled case: k=0 loads a positive qNaN into sum with an
+        // add; k=1 combines that NaN sum with a negative qNaN of a different
+        // payload using either add or sub. This is not inferred from the cycling
+        // specials arrays above.
+        auto explicit_nan_pair_matches = [&](bool subtract, MatvecFn fn) {
+            const size_t M = 33;
+            const size_t K = 64;
+            const size_t words_per_row = (K + 31) / 32;
+            std::vector<int32_t> packed(M * words_per_row, 0);
+            for (size_t r = 0; r < M; ++r) {
+                // bit 0 = +1 (add x[0]); bit 1 selects +1 (add) or -1 (sub x[1]).
+                packed[r * words_per_row] = subtract ? 2 : 0;
+            }
+
+            std::vector<float> x(K, 1.0f);
+            x[0] = avx2_test_float_from_bits(0x7fc00001u); // +qNaN, payload 1
+            x[1] = avx2_test_float_from_bits(0xffc12345u); // -qNaN, different payload
+
+            std::vector<float> y_ref(M, 0.0f), y_cand(M, 0.0f);
+            reference_binary_matvec_mult(packed.data(), x.data(), y_ref.data(), M, K);
+            fn(packed.data(), x.data(), y_cand.data(), M, K);
+            for (size_t i = 0; i < M; ++i) {
+                if (!same_float_bits(y_ref[i], y_cand[i])) return false;
+            }
+            return true;
+        };
+
+        const size_t variant_count = sizeof(variants) / sizeof(variants[0]);
+        size_t nan_pair_checked = 0;
+        for (bool subtract : {false, true}) {
+            for (const Variant& variant : variants) {
+                if (!explicit_nan_pair_matches(subtract, variant.fn)) {
+                    std::cerr << "NEON BOTH-NAN PAIR MISMATCH [" << variant.name
+                              << "] op=" << (subtract ? "sub" : "add") << '\n';
+                    std::abort();
+                }
+                ++nan_pair_checked;
+            }
+        }
+
         // LITTLEBIT_DISABLE_NEON must route the engine kernel through the same
         // scalar oracle, including the final-tail path.
         setenv("LITTLEBIT_DISABLE_NEON", "1", 1);
@@ -440,10 +480,12 @@ int main() {
         assert(littlebit::neon_available());
 
         std::cout << "  ✓ Test 7: ARM64 NEON variants (" << checked
-                  << " shape/pattern cases across "
-                  << (sizeof(variants) / sizeof(variants[0]))
+                  << " shape/pattern cases across " << variant_count
                   << " kernels) bit-exact incl. tails and NaN payloads."
                   << std::endl;
+        std::cout << "  ✓ Test 7b: explicit both-NaN sum/x pairs ("
+                  << nan_pair_checked << " raw-bit checks across " << variant_count
+                  << " kernels) bit-exact for add and sub." << std::endl;
     }
 #endif
 

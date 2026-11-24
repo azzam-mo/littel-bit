@@ -63,11 +63,20 @@ jobs:
         if [ -x build-arm64/test_binary_packer ]; then
           build-arm64/test_binary_packer > test7.log 2>&1
           code=$?
-          grep -E 'Test 7|NEON VARIANT MISMATCH|All binary_packer' test7.log || true
+          grep -E 'Test 7|NEON VARIANT MISMATCH|NEON BOTH-NAN PAIR MISMATCH|All binary_packer' test7.log || true
           line=$(grep -E 'Test 7:' test7.log | tail -1 || true)
           if printf '%s' "$line" | grep -q 'bit-exact'; then result=PASS; else result=FAIL; fi
-          cases=$(printf '%s' "$line" | sed -n 's/.*(\([0-9][0-9]*\) shape\/pattern cases).*/\1/p')
-          if [ -z "$cases" ]; then cases=0; fi
+          cases=$(printf '%s' "$line" | sed -n 's/.*(\([0-9][0-9]*\) shape\/pattern cases.*/\1/p')
+          if [ -z "$cases" ]; then
+            cases=0
+            code=1
+            result=FAIL
+            echo "Test 7 case count extraction failed from: $line" >&2
+          elif [ "$cases" != "13680" ]; then
+            code=1
+            result=FAIL
+            echo "Test 7 case count mismatch: extracted '$cases', expected 13680" >&2
+          fi
         else
           code=1
           result=UNAVAILABLE
@@ -332,7 +341,7 @@ jobs:
         grep -E '^(NEON_AVAILABLE|BENCH_PROTOCOL|PARITY_FAILURES|DISPATCH_MATCHES_SCALAR|DISPATCH_MATCHES_NEON|MAX_CV_HIGH|BENCH_VERDICT|ACCEPT_)=' bench-variants.log > bench-flags.txt || true
         exit $code
 
-    - name: Check ordered FP operand order in NEON disassembly
+    - name: Check ordered FP instruction set in NEON disassembly
       id: disasm
       if: always()
       run: |
@@ -340,12 +349,16 @@ jobs:
         objdump -d -C build-arm64/liblittlebit_engine.a > neon-disasm.txt 2> neon-disasm-err.txt
         objdump_code=$?
 
-        python3 - <<'PY' > neon-disasm-check.txt 2>&1
+        mkdir -p "$RUNNER_TEMP/neon-disasm-fixtures"
+        cat > "$RUNNER_TEMP/neon_disasm_check.py" <<'PY'
         import re
         import sys
 
-        WANT = ("binary_matvec_mult_neon", "neon_variant_")
-        text = open("neon-disasm.txt", errors="replace").read()
+        WANT = ("binary_matvec_mult_neon", "neon_variant_", "neon_rows")
+        FMA_OPS = ("fmla", "fmls", "fmadd", "fmsub", "fnmadd", "fnmsub")
+
+        path = sys.argv[1] if len(sys.argv) > 1 else "neon-disasm.txt"
+        text = open(path, errors="replace").read()
 
         func_re = re.compile(r"^[0-9a-fA-F]+ <(.+)>:\s*$")
         insn_re = re.compile(r"^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]+\s+([a-z0-9]+)\s+(.*)$")
@@ -369,70 +382,211 @@ jobs:
 
         selected = [(n, ls) for n, ls in blocks if any(w in n for w in WANT)]
         problems = []
+        order_warnings = []
         fadd_count = 0
+        fsub_count = 0
         fma_count = 0
+        unverified_count = 0
 
         for fname, flines in selected:
-            candidates = set()
-            func_fadd = 0
+            acc = set()
+            vx = set()
             for raw in flines:
                 match = insn_re.match(raw)
                 if not match:
                     continue
                 op, operands = match.groups()
                 regs = [int(r) for r in reg_re.findall(operands)]
+                stripped = raw.strip()
+
+                if any(op.startswith(prefix) for prefix in FMA_OPS):
+                    fma_count += 1
+                    problems.append(
+                        f"{fname}: forbidden FMA-family instruction '{stripped}'; "
+                        "expected no fmla/fmls/fmadd/fmsub/fnmadd/fnmsub"
+                    )
+                    continue
 
                 if op in ("movi", "fmov") and "#0" in operands and regs:
-                    candidates.add(regs[0])
-                elif op == "dup" and ("wzr" in operands or "#0" in operands) and regs:
-                    candidates.add(regs[0])
-                elif op == "eor" and len(regs) >= 3 and regs[1] in candidates and regs[2] in candidates:
-                    candidates.add(regs[0])
-                elif op == "mov" and len(regs) >= 2 and regs[1] in candidates:
-                    candidates.add(regs[0])
+                    acc.add(regs[0])
+                elif op == "dup" and regs:
+                    if "wzr" in operands or "#0" in operands:
+                        acc.add(regs[0])
+                    else:
+                        vx.add(regs[0])
+                elif op == "ld1r" and regs:
+                    vx.add(regs[0])
+                elif op == "eor" and len(regs) >= 3:
+                    if regs[1] == regs[2] and regs[1] not in acc:
+                        acc.add(regs[0])
+                    elif regs[1] in acc and regs[2] in acc:
+                        acc.add(regs[0])
+                elif op in ("mov", "orr") and len(regs) >= 2 and any(r in acc for r in regs[1:]):
+                    acc.add(regs[0])
+                elif op == "bsl" and len(regs) >= 3 and any(r in acc for r in regs[1:]):
+                    acc.add(regs[0])
                 elif op in ("fadd", "fsub"):
-                    func_fadd += 1
-                    fadd_count += 1
+                    if op == "fadd":
+                        fadd_count += 1
+                    else:
+                        fsub_count += 1
                     if len(regs) < 3:
-                        problems.append(f"{fname}: malformed {op}: {raw.strip()}")
+                        unverified_count += 1
+                        order_warnings.append(
+                            f"{fname}: ORDER_UNVERIFIED malformed {op} '{stripped}'; "
+                            "expected 'fadd/fsub dst.4s, acc.4s, vx.4s'"
+                        )
                         continue
                     dst, src1, src2 = regs[0], regs[1], regs[2]
-                    if src1 not in candidates:
+                    if src1 in acc:
+                        pass
+                    elif src1 in vx and src2 in acc:
                         problems.append(
-                            f"{fname}: {op} first source v{src1} is not a tracked accumulator "
-                            f"register: {raw.strip()}"
+                            f"{fname}: provable operand swap in '{stripped}': src1 v{src1} "
+                            f"is a known vx register and src2 v{src2} is a known accumulator; "
+                            "expected accumulator as src1"
                         )
-                    candidates.add(dst)
-                elif op.startswith("fmadd") or op.startswith("fmsub") or op.startswith("fnmadd") or op.startswith("fnmsub"):
-                    fma_count += 1
-                    problems.append(f"{fname}: forbidden fused multiply-add: {raw.strip()}")
-                elif op == "bsl" and len(regs) >= 3 and any(r in candidates for r in regs[1:3]):
-                    candidates.add(regs[0])
-
-            if func_fadd == 0:
-                problems.append(f"{fname}: no vector fadd/fsub found")
+                    else:
+                        unverified_count += 1
+                        order_warnings.append(
+                            f"{fname}: ORDER_UNVERIFIED in '{stripped}': src1 v{src1} could "
+                            "not be proven to be an accumulator; expected accumulator as src1"
+                        )
+                    acc.add(dst)
 
         if not selected:
-            problems.append("no NEON kernel functions found in objdump output")
-        if fadd_count == 0:
-            problems.append("no fadd/fsub instructions found in NEON kernels")
+            problems.append(
+                "no NEON kernel functions found in objdump output; expected functions matching "
+                + ", ".join(WANT)
+            )
+        if fadd_count + fsub_count == 0:
+            problems.append(
+                "no fadd/fsub instructions found across selected NEON functions; expected at "
+                "least one ordered FP add/sub"
+            )
 
         print(f"DISASM_FUNCTIONS={len(selected)}")
-        print(f"DISASM_FADD_FSUB={fadd_count}")
+        print(f"DISASM_FADD={fadd_count}")
+        print(f"DISASM_FSUB={fsub_count}")
         print(f"DISASM_FMA={fma_count}")
+        print(f"DISASM_ORDER_UNVERIFIED={unverified_count}")
+        for problem in problems:
+            print("DISASM_PROBLEM=" + problem)
+        if unverified_count:
+            print(f"DISASM_WARNING=ORDER_UNVERIFIED ({unverified_count} instructions)")
+        for warning in order_warnings:
+            print("DISASM_ORDER_WARNING=" + warning)
         if problems:
             print("DISASM_CHECK=FAIL")
-            for problem in problems:
-                print("DISASM_PROBLEM=" + problem)
             sys.exit(1)
-        print("DISASM_CHECK=PASS")
+        if order_warnings:
+            print("DISASM_CHECK=PASS_WITH_WARNINGS")
+        else:
+            print("DISASM_CHECK=PASS")
+        sys.exit(0)
         PY
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/ok.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_4(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	a9bf7bfd 	stp	x29, x30, [sp, #-16]!
+           4:	910003fd 	mov	x29, sp
+           8:	4e020c10 	movi	v16.4s, #0
+           c:	4e041c11 	dup	v17.4s, w2
+          10:	4e211212 	fadd	v18.4s, v16.4s, v17.4s
+          14:	4e221213 	fsub	v19.4s, v16.4s, v17.4s
+          18:	6e191210 	bsl	v16.16b, v19.16b, v18.16b
+          1c:	d65f03c0 	ret
+        EOF
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/fma.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_8(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	4e020c10 	movi	v16.4s, #0
+           4:	4e041c11 	dup	v17.4s, w2
+           8:	4e211a12 	fmla	v18.4s, v16.4s, v17.4s
+           c:	4e221213 	fsub	v19.4s, v16.4s, v17.4s
+          10:	d65f03c0 	ret
+        EOF
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/swap.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_16(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	4e020c10 	movi	v16.4s, #0
+           4:	4e041c11 	dup	v17.4s, w2
+           8:	4e211212 	fadd	v18.4s, v17.4s, v16.4s
+           c:	d65f03c0 	ret
+        EOF
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/wrapper.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_32(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	94000000 	bl	0 <littlebit::neon_rows_group<8, false, false>(int const*, float const*, float*, unsigned long, unsigned long)>
+           4:	d65f03c0 	ret
+
+        0000000000000040 <littlebit::neon_rows_group<8, false, false>(int const*, float const*, float*, unsigned long, unsigned long)>:
+          40:	4e020c10 	movi	v16.4s, #0
+          44:	4e041c11 	dup	v17.4s, w2
+          48:	4e211212 	fadd	v18.4s, v16.4s, v17.4s
+          4c:	d65f03c0 	ret
+        EOF
+
+        selftest_fail=0
+        run_fixture() {
+          fixture="$1"
+          expected_rc="$2"
+          expected_verdict="$3"
+          out="neon-disasm-selftest-$fixture.txt"
+          python3 "$RUNNER_TEMP/neon_disasm_check.py" "$RUNNER_TEMP/neon-disasm-fixtures/$fixture.txt" > "$out" 2>&1
+          rc=$?
+          verdict=$(grep '^DISASM_CHECK=' "$out" | tail -1 | cut -d= -f2)
+          cat "$out"
+          if [ "$rc" -ne "$expected_rc" ] || [ "$verdict" != "$expected_verdict" ]; then
+            echo "SELFTEST_FAIL=$fixture expected rc=$expected_rc verdict=$expected_verdict got rc=$rc verdict=$verdict"
+            selftest_fail=1
+          else
+            echo "SELFTEST_PASS=$fixture verdict=$verdict"
+          fi
+        }
+
+        run_fixture ok 0 PASS
+        run_fixture fma 1 FAIL
+        run_fixture swap 1 FAIL
+        run_fixture wrapper 0 PASS
+
+        if grep -q '^DISASM_FMA=[1-9]' neon-disasm-selftest-fma.txt; then
+          echo 'SELFTEST_PASS=fma count'
+        else
+          echo 'SELFTEST_FAIL=fma count'
+          selftest_fail=1
+        fi
+        if grep -q 'provable operand swap' neon-disasm-selftest-swap.txt; then
+          echo 'SELFTEST_PASS=swap diagnosis'
+        else
+          echo 'SELFTEST_FAIL=swap diagnosis'
+          selftest_fail=1
+        fi
+
+        python3 "$RUNNER_TEMP/neon_disasm_check.py" neon-disasm.txt > neon-disasm-check.txt 2>&1
         check_code=$?
 
         cat neon-disasm-check.txt
-        grep -E '^DISASM_(FUNCTIONS|FADD_FSUB|FMA|CHECK)=' neon-disasm-check.txt > disasm-flags.txt || true
+        grep -E '^(DISASM_FUNCTIONS|DISASM_FADD|DISASM_FSUB|DISASM_FMA|DISASM_ORDER_UNVERIFIED|DISASM_CHECK|DISASM_PROBLEM|DISASM_WARNING|DISASM_ORDER_WARNING)=' neon-disasm-check.txt > disasm-flags.txt || true
 
         if [ $objdump_code -ne 0 ]; then exit $objdump_code; fi
+        if [ "$selftest_fail" -ne 0 ]; then exit 1; fi
         exit $check_code
 
     - name: Write job summary
@@ -449,6 +603,12 @@ jobs:
           echo "- ctest (NEON disabled): ${{ steps.ctest_scalar.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_scalar.outputs.code || 'n/a' }}\`)"
           echo "- Test 7 raw-bit parity: ${{ steps.test7.outputs.result || 'unknown' }} (${{ steps.test7.outputs.cases || '0' }} cases)"
           echo "- Ordered FP disassembly check: \`$(grep '^DISASM_CHECK=' disasm-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          if [ -s disasm-flags.txt ]; then
+            grep -E '^(DISASM_FUNCTIONS|DISASM_FADD|DISASM_FSUB|DISASM_FMA|DISASM_ORDER_UNVERIFIED|DISASM_WARNING)=' disasm-flags.txt | sed 's/^/- /'
+            grep -E '^DISASM_(PROBLEM|ORDER_WARNING)=' disasm-flags.txt | sed 's/^/- /'
+          else
+            echo "- _disassembly flags unavailable_"
+          fi
           echo
           echo "### Benchmark acceptance"
           echo
@@ -476,6 +636,7 @@ jobs:
           neon-disasm.txt
           neon-disasm-err.txt
           neon-disasm-check.txt
+          neon-disasm-selftest-*.txt
           disasm-flags.txt
         if-no-files-found: warn
 
