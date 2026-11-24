@@ -1,0 +1,12 @@
+[MATCH] 'hello' -> 1 tokens
+[MATCH] 'Qwen3 runs locally on iPhone.' -> 8 tokens
+[MATCH] 'مرحبا بالعالم' -> 5 tokens
+[MATCH] 'مرحبا، كيف حالك؟ ١٢٣' -> 15 tokens
+[MATCH] '12345 3.14159 2026-11-23' -> 24 tokens
+[MATCH] '!@#$%^&*()[]{}<>?/\\|~`+-=' -> 17 tokens
+[MATCH] 'Mixed مرحبا 123 — 🌟' -> 12 tokens
+[MATCH] '<|im_start|>user\nhello<|im_end|>\n<|im_start|>...' -> 9 tokens
+[MATCH] '<|im_start|>user\nhello<|im_end|>\n<|im_start|>...' -> 9 tokens
+[MATCH] '<|im_start|>user\nمرحبا<|im_end|>\n<|im_start|>...' -> 11 tokens
+[MATCH] '<|im_start|>user\n123<|im_end|>\n<|im_start|>as...' -> 11 tokens
+RESULT: PASS

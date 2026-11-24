@@ -35,10 +35,76 @@ static inline __m256 add_ordered(__m256 src1, __m256 src2) {
     return result;
 }
 
-// Eight vocabulary rows are accumulated in eight AVX2 lanes. For each 8-element
-// hidden group the reduction reproduces GCC's auto-vectorized scalar order
-// exactly, including the alternating vaddps operand order that controls NaN
-// payload/sign selection.
+__attribute__((target("avx2"), always_inline))
+static inline __m256 bf16_lane_to_float(__m128i bits16) {
+    const __m256i w32 = _mm256_slli_epi32(_mm256_cvtepu16_epi32(bits16), 16);
+    return _mm256_castsi256_ps(w32);
+}
+
+// GCC's packed multiply uses src1=weight, src2=hidden. Keeping the operand
+// order explicit preserves NaN payload/sign selection.
+__attribute__((target("avx2"), always_inline))
+static inline __m256 mul_weight_hidden(__m256 w, __m256 hv) {
+    __m256 p;
+    __asm__ volatile("vmulps %2, %1, %0" : "=x"(p) : "x"(w), "x"(hv));
+    return p;
+}
+
+// Transpose eight packed uint16 rows. Each input register holds eight
+// consecutive hidden elements of one vocabulary row; each output register holds
+// one hidden element from eight consecutive vocabulary rows.
+__attribute__((target("avx2"), always_inline))
+static inline void transpose8x8_u16(const __m128i* in, __m128i* out) {
+    const __m128i t0 = _mm_unpacklo_epi16(in[0], in[1]);
+    const __m128i t1 = _mm_unpackhi_epi16(in[0], in[1]);
+    const __m128i t2 = _mm_unpacklo_epi16(in[2], in[3]);
+    const __m128i t3 = _mm_unpackhi_epi16(in[2], in[3]);
+    const __m128i t4 = _mm_unpacklo_epi16(in[4], in[5]);
+    const __m128i t5 = _mm_unpackhi_epi16(in[4], in[5]);
+    const __m128i t6 = _mm_unpacklo_epi16(in[6], in[7]);
+    const __m128i t7 = _mm_unpackhi_epi16(in[6], in[7]);
+
+    const __m128i s0 = _mm_unpacklo_epi32(t0, t2);
+    const __m128i s1 = _mm_unpackhi_epi32(t0, t2);
+    const __m128i s2 = _mm_unpacklo_epi32(t1, t3);
+    const __m128i s3 = _mm_unpackhi_epi32(t1, t3);
+    const __m128i s4 = _mm_unpacklo_epi32(t4, t6);
+    const __m128i s5 = _mm_unpackhi_epi32(t4, t6);
+    const __m128i s6 = _mm_unpacklo_epi32(t5, t7);
+    const __m128i s7 = _mm_unpackhi_epi32(t5, t7);
+
+    out[0] = _mm_unpacklo_epi64(s0, s4);
+    out[1] = _mm_unpackhi_epi64(s0, s4);
+    out[2] = _mm_unpacklo_epi64(s1, s5);
+    out[3] = _mm_unpackhi_epi64(s1, s5);
+    out[4] = _mm_unpacklo_epi64(s2, s6);
+    out[5] = _mm_unpackhi_epi64(s2, s6);
+    out[6] = _mm_unpacklo_epi64(s3, s7);
+    out[7] = _mm_unpackhi_epi64(s3, s7);
+}
+
+// Exact compiled-oracle reduction order for one 8-element hidden group. One
+// vocabulary row is accumulated per AVX2 lane, so the sequence of additions is
+// identical to the scalar oracle while the gathers are gone.
+__attribute__((target("avx2"), always_inline))
+static inline __m256 step8_from_columns(
+    const __m128i* c, const float* h, size_t j, __m256 sum
+) {
+    sum = add_ordered(mul_weight_hidden(bf16_lane_to_float(c[0]), _mm256_set1_ps(h[j + 0])), sum);
+    sum = add_ordered(mul_weight_hidden(bf16_lane_to_float(c[1]), _mm256_set1_ps(h[j + 1])), sum);
+    sum = add_ordered(sum, mul_weight_hidden(bf16_lane_to_float(c[2]), _mm256_set1_ps(h[j + 2])));
+    sum = add_ordered(sum, mul_weight_hidden(bf16_lane_to_float(c[3]), _mm256_set1_ps(h[j + 3])));
+    sum = add_ordered(sum, mul_weight_hidden(bf16_lane_to_float(c[4]), _mm256_set1_ps(h[j + 4])));
+    sum = add_ordered(sum, mul_weight_hidden(bf16_lane_to_float(c[5]), _mm256_set1_ps(h[j + 5])));
+    sum = add_ordered(sum, mul_weight_hidden(bf16_lane_to_float(c[6]), _mm256_set1_ps(h[j + 6])));
+    sum = add_ordered(sum, mul_weight_hidden(bf16_lane_to_float(c[7]), _mm256_set1_ps(h[j + 7])));
+    return sum;
+}
+
+// Eight vocabulary rows are accumulated in eight AVX2 lanes. Each row is read
+// with contiguous 16-byte loads and an 8x8 register transpose replaces the
+// previous per-element 32-bit gathers. The reduction order is still exactly the
+// frozen scalar order, including alternating vaddps operand order.
 __attribute__((target("avx2")))
 void avx2_row_lanes(
     const uint16_t* W, const float* h, float* out, size_t V, size_t H
@@ -48,78 +114,22 @@ void avx2_row_lanes(
         return;
     }
 
-    const int Hi = static_cast<int>(H);
-    const __m256i lane = _mm256_set_epi32(
-        7 * Hi, 6 * Hi, 5 * Hi, 4 * Hi, 3 * Hi, 2 * Hi, 1 * Hi, 0
-    );
-    const __m256i mask16 = _mm256_set1_epi32(0xffff);
-    const int* base = reinterpret_cast<const int*>(W);
-
     size_t v = 0;
     for (; v + 8 <= V; v += 8) {
+        const uint16_t* rows[8];
+        for (int r = 0; r < 8; ++r) rows[r] = W + (v + r) * H;
+
         __m256 sum = _mm256_setzero_ps();
-        const __m256i vbase = _mm256_set1_epi32(static_cast<int>(v * H));
-
-        // A 32-bit gather from a BF16 address also reads the adjacent BF16.
-        // Avoid that read at the final hidden element by loading the last
-        // 8-element group directly with in-bounds 16-bit loads.
-        for (size_t j = 0; j + 8 < H; j += 8) {
-            __m256 P[8];
-            for (int t = 0; t < 8; ++t) {
-                const __m256i idx = _mm256_add_epi32(
-                    _mm256_add_epi32(vbase, lane),
-                    _mm256_set1_epi32(static_cast<int>(j + t))
+        for (size_t j = 0; j < H; j += 8) {
+            __m128i in[8];
+            __m128i columns[8];
+            for (int r = 0; r < 8; ++r) {
+                in[r] = _mm_loadu_si128(
+                    reinterpret_cast<const __m128i*>(rows[r] + j)
                 );
-                const __m256i raw = _mm256_i32gather_epi32(base, idx, 2);
-                const __m256i bf_bits = _mm256_slli_epi32(
-                    _mm256_and_si256(raw, mask16), 16
-                );
-                const __m256 w = _mm256_castsi256_ps(bf_bits);
-                const __m256 hv = _mm256_set1_ps(h[j + t]);
-                __m256 p;
-                // GCC's packed multiply uses src1=weight, src2=hidden.
-                __asm__ volatile("vmulps %2, %1, %0" : "=x"(p) : "x"(w), "x"(hv));
-                P[t] = p;
             }
-
-            // Exact compiled-oracle reduction order for one 8-element group.
-            sum = add_ordered(P[0], sum); // p0 + dot  (src1=p0, src2=dot)
-            sum = add_ordered(P[1], sum); // p1 + acc  (src1=p1, src2=acc)
-            sum = add_ordered(sum, P[2]);
-            sum = add_ordered(sum, P[3]);
-            sum = add_ordered(sum, P[4]);
-            sum = add_ordered(sum, P[5]);
-            sum = add_ordered(sum, P[6]);
-            sum = add_ordered(sum, P[7]);
-        }
-        {
-            const size_t j = H - 8;
-            const uint16_t* r0 = W + v * H;
-            __m256 P[8];
-            for (int t = 0; t < 8; ++t) {
-                const __m256i raw = _mm256_setr_epi32(
-                    r0[0 * H + j + t], r0[1 * H + j + t],
-                    r0[2 * H + j + t], r0[3 * H + j + t],
-                    r0[4 * H + j + t], r0[5 * H + j + t],
-                    r0[6 * H + j + t], r0[7 * H + j + t]
-                );
-                const __m256i bf_bits = _mm256_slli_epi32(
-                    _mm256_and_si256(raw, mask16), 16
-                );
-                const __m256 w = _mm256_castsi256_ps(bf_bits);
-                const __m256 hv = _mm256_set1_ps(h[j + t]);
-                __m256 p;
-                __asm__ volatile("vmulps %2, %1, %0" : "=x"(p) : "x"(w), "x"(hv));
-                P[t] = p;
-            }
-            sum = add_ordered(P[0], sum);
-            sum = add_ordered(P[1], sum);
-            sum = add_ordered(sum, P[2]);
-            sum = add_ordered(sum, P[3]);
-            sum = add_ordered(sum, P[4]);
-            sum = add_ordered(sum, P[5]);
-            sum = add_ordered(sum, P[6]);
-            sum = add_ordered(sum, P[7]);
+            transpose8x8_u16(in, columns);
+            sum = step8_from_columns(columns, h, j, sum);
         }
         _mm256_storeu_ps(out + v, sum);
     }
