@@ -1,0 +1,23 @@
+{
+  "model_dir": "/home/mrdp_24193/Documents/deepseek-harness/default-workspace/littel-bit/artifacts",
+  "repeats": 5,
+  "all_exact": true,
+  "paths": [
+    {"name": "model.layers.0.self_attn.q_proj.V", "M": 544, "K": 4096, "bytes": 278528, "engine_ms": 0.335836, "avx8_ms": 0.233527, "avx16_ms": 0.202385, "avx32_ms": 0.627673, "avx64_ms": 0.664051, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.self_attn.q_proj.U", "M": 4096, "K": 544, "bytes": 278528, "engine_ms": 0.338957, "avx8_ms": 0.238117, "avx16_ms": 0.207211, "avx32_ms": 0.200385, "avx64_ms": 0.203811, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.self_attn.q_proj.V_R", "M": 544, "K": 4096, "bytes": 278528, "engine_ms": 0.340105, "avx8_ms": 0.241543, "avx16_ms": 0.206957, "avx32_ms": 0.635786, "avx64_ms": 0.658117, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.self_attn.q_proj.U_R", "M": 4096, "K": 544, "bytes": 278528, "engine_ms": 0.333079, "avx8_ms": 0.189633, "avx16_ms": 0.167883, "avx32_ms": 0.161649, "avx64_ms": 0.180313, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.gate_proj.V", "M": 824, "K": 4096, "bytes": 421888, "engine_ms": 0.510834, "avx8_ms": 0.390082, "avx16_ms": 0.605839, "avx32_ms": 1.033092, "avx64_ms": 1.025922, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.gate_proj.U", "M": 12288, "K": 824, "bytes": 1277952, "engine_ms": 1.764119, "avx8_ms": 1.214495, "avx16_ms": 0.955134, "avx32_ms": 0.843299, "avx64_ms": 0.911088, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.gate_proj.V_R", "M": 824, "K": 4096, "bytes": 421888, "engine_ms": 0.477340, "avx8_ms": 0.383175, "avx16_ms": 0.587032, "avx32_ms": 1.018092, "avx64_ms": 1.125582, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.gate_proj.U_R", "M": 12288, "K": 824, "bytes": 1277952, "engine_ms": 1.507216, "avx8_ms": 0.933940, "avx16_ms": 0.920516, "avx32_ms": 0.836907, "avx64_ms": 0.766429, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.up_proj.V", "M": 824, "K": 4096, "bytes": 421888, "engine_ms": 0.547552, "avx8_ms": 0.471322, "avx16_ms": 0.884403, "avx32_ms": 1.032114, "avx64_ms": 1.057276, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.up_proj.U", "M": 12288, "K": 824, "bytes": 1277952, "engine_ms": 1.490926, "avx8_ms": 0.966022, "avx16_ms": 0.860875, "avx32_ms": 0.866161, "avx64_ms": 0.812957, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.up_proj.V_R", "M": 824, "K": 4096, "bytes": 421888, "engine_ms": 0.515062, "avx8_ms": 0.386346, "avx16_ms": 1.030348, "avx32_ms": 1.032648, "avx64_ms": 1.102864, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.up_proj.U_R", "M": 12288, "K": 824, "bytes": 1277952, "engine_ms": 1.553266, "avx8_ms": 0.920330, "avx16_ms": 0.813063, "avx32_ms": 0.796133, "avx64_ms": 0.810049, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.down_proj.V", "M": 824, "K": 12288, "bytes": 1265664, "engine_ms": 1.563210, "avx8_ms": 1.239731, "avx16_ms": 1.724559, "avx32_ms": 3.087204, "avx64_ms": 3.190723, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.down_proj.U", "M": 4096, "K": 824, "bytes": 425984, "engine_ms": 0.509328, "avx8_ms": 0.304941, "avx16_ms": 0.266669, "avx32_ms": 0.255061, "avx64_ms": 0.248501, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.down_proj.V_R", "M": 824, "K": 12288, "bytes": 1265664, "engine_ms": 1.629368, "avx8_ms": 1.265587, "avx16_ms": 1.740727, "avx32_ms": 2.993938, "avx64_ms": 3.208142, "exact8": true, "exact16": true, "exact32": true, "exact64": true},
+    {"name": "model.layers.0.mlp.down_proj.U_R", "M": 4096, "K": 824, "bytes": 425984, "engine_ms": 0.510444, "avx8_ms": 0.377215, "avx16_ms": 0.327819, "avx32_ms": 0.295481, "avx64_ms": 0.238479, "exact8": true, "exact16": true, "exact32": true, "exact64": true}
+  ]
+}

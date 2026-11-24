@@ -1,0 +1,19 @@
+lm_head V=151936 H=4096 bytes=1244659712
+MISMATCH independent_rows V=8 H=8 v=0 ref=7fe10000 got=7fe12345
+special_sweep transpose8 cases=80 failed_cases=0 result=PASS
+special_sweep transpose16wide cases=80 failed_cases=0 result=PASS
+special_sweep transpose16 cases=80 failed_cases=0 result=PASS
+special_sweep transpose16_pipe cases=80 failed_cases=0 result=PASS
+special_sweep independent_rows cases=80 failed_cases=24 result=FAIL
+real_exact engine_avx2=1 local_oracle=1 candidates=1
+engine_avx2 median_ms=96.0538 GB/s=12.9579
+scalar median_ms=512.959 GB/s=2.42643
+transpose8 median_ms=100.659 GB/s=12.3651
+transpose16wide median_ms=98.1557 GB/s=12.6805
+transpose16 median_ms=147.686 GB/s=8.42777
+transpose16_pipe median_ms=150.469 GB/s=8.27185
+independent_rows median_ms=211.281 GB/s=5.89102
+memory_only median_ms=42.9736 GB/s=28.9634
+convert_only median_ms=45.6811 GB/s=27.2467
+convert_only median_ms=46.1648 GB/s=26.9612
+multiply_only median_ms=163 GB/s=7.63596

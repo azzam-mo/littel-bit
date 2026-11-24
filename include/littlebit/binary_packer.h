@@ -33,6 +33,32 @@ void binary_matvec_mult(
     size_t K
 );
 
+// Separate AVX2 kernel for Phase 9 Optimization 2. It processes eight output
+// rows in parallel without changing the per-row accumulation order. Runtime
+// detection and a bit-exact scalar fallback are built in.
+// Set LITTLEBIT_DISABLE_AVX2=1 to force the scalar fallback.
+void binary_matvec_mult_avx2(
+    const int32_t* packed_A,
+    const float* x,
+    float* y,
+    size_t M,
+    size_t K
+);
+
+// True only when AVX2 is supported by the CPU and not disabled at runtime.
+bool avx2_available();
+
+// ARM64 NEON kernel for binary matvec. Declared on all platforms so test code
+// can be shared; always falls back to the frozen scalar kernel when unavailable.
+bool neon_available();
+void binary_matvec_mult_neon(
+    const int32_t* packed_A,
+    const float* x,
+    float* y,
+    size_t M,
+    size_t K
+);
+
 // High-performance Transposed Binary Matrix-Vector Multiplication:
 // Computes y = A^T * x, where:
 // - A is (M x K) packed matrix

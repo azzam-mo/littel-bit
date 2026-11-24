@@ -1,0 +1,6 @@
+[config] MATCH
+[tensors] 4431 required, missing 0 []
+[embeddings] MATCH
+[layer] model.layers.0.self_attn.q_proj in=4096 out=4096 max_abs=4.29153e-06 rel=1.10562e-06 MATCH
+[probe] 4096 4096 544 1
+RESULT: PASS

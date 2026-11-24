@@ -1,0 +1,9 @@
+[profile] running: /usr/bin/taskset -c 0-3 /tmp/opencode/lbit-p9-opt4-base/perf_benchmark /home/mrdp_24193/Documents/deepseek-harness/default-workspace/littel-bit/artifacts مرحبا 262,220,16 512 1 3 /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/docs/phase9-profiles/opt4_base_full2.json
+[MODEL] Loaded config: 36 layers, hidden=4096, vocab=151936
+[MODEL] Memory-mapped embedding table: 151936x4096
+[MODEL] Memory-mapped lm_head table: 151936x4096
+[MODEL] Successfully loaded in 0.909525s. Current RSS: 1137 MB
+[PROFILE] prompt_tokens=11 decode_tokens=3 ttft_ms=13728.1 decode_ms_per_token=1187.29 replay_logit_max_abs=0
+[PROFILE] json=/home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/docs/phase9-profiles/opt4_base_full2.json
+[profile] wrote /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/docs/phase9-profiles/opt4_base_full2.json
+[profile] wrote /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/docs/phase9-profiles/opt4_base_full2.md

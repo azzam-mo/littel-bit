@@ -1,0 +1,747 @@
+name: LittleBit ARM64 NEON CI
+
+on:
+  push:
+    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants", "phase11-neon32-dispatch" ]
+  pull_request:
+    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants", "phase11-neon32-dispatch" ]
+  workflow_dispatch:
+
+jobs:
+  arm64-neon:
+    name: ARM64 NEON (native)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++
+
+    - name: Configure CMake (Release)
+      run: cmake -S . -B build-arm64 -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build C++ engine and tests
+      run: cmake --build build-arm64 --config Release -j2
+
+    - name: Run tests with NEON enabled
+      id: ctest_neon
+      run: |
+        set +e
+        ctest --test-dir build-arm64 --output-on-failure > ctest-neon.log 2>&1
+        code=$?
+        cat ctest-neon.log
+        line=$(grep -E 'tests passed|tests failed' ctest-neon.log | tail -1 || true)
+        {
+          echo "code=$code"
+          echo "summary=$line"
+        } >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Run tests with NEON disabled (scalar fallback)
+      id: ctest_scalar
+      if: always()
+      run: |
+        set +e
+        LITTLEBIT_DISABLE_NEON=1 ctest --test-dir build-arm64 --output-on-failure > ctest-scalar.log 2>&1
+        code=$?
+        cat ctest-scalar.log
+        line=$(grep -E 'tests passed|tests failed' ctest-scalar.log | tail -1 || true)
+        {
+          echo "code=$code"
+          echo "summary=$line"
+        } >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Report Test 7 (NEON raw-bit parity)
+      id: test7
+      if: always()
+      run: |
+        set +e
+        if [ -x build-arm64/test_binary_packer ]; then
+          build-arm64/test_binary_packer > test7.log 2>&1
+          code=$?
+          grep -E 'Test 7|NEON VARIANT MISMATCH|NEON BOTH-NAN PAIR MISMATCH|All binary_packer' test7.log || true
+          line=$(grep -E 'Test 7:' test7.log | tail -1 || true)
+          if printf '%s' "$line" | grep -q 'bit-exact'; then result=PASS; else result=FAIL; fi
+          cases=$(printf '%s' "$line" | sed -n 's/.*(\([0-9][0-9]*\) shape\/pattern cases.*/\1/p')
+          if [ -z "$cases" ]; then
+            cases=0
+            code=1
+            result=FAIL
+            echo "Test 7 case count extraction failed from: $line" >&2
+          elif [ "$cases" != "15960" ]; then
+            code=1
+            result=FAIL
+            echo "Test 7 case count mismatch: extracted '$cases', expected 15960" >&2
+          fi
+        else
+          code=1
+          result=UNAVAILABLE
+          cases=0
+          echo 'test_binary_packer binary not available' > test7.log
+        fi
+        {
+          echo "code=$code"
+          echo "result=$result"
+          echo "cases=$cases"
+        } >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Binary matvec microbenchmark (synthetic, 12 Phase 10 shapes)
+      id: bench
+      if: always()
+      run: |
+        set -e
+        cat > "$RUNNER_TEMP/neon_variants_bench.cpp" <<'CPP'
+        #include "littlebit/binary_packer.h"
+        #include "littlebit/binary_packer_neon_variants_internal.h"
+        #include "littlebit/scalar_kernels.h"
+
+        #include <algorithm>
+        #include <chrono>
+        #include <cmath>
+        #include <cstdint>
+        #include <cstring>
+        #include <iomanip>
+        #include <iostream>
+        #include <numeric>
+        #include <sstream>
+        #include <string>
+        #include <vector>
+
+        using Clock = std::chrono::steady_clock;
+        using MatvecFn = void (*)(const int32_t*, const float*, float*, size_t, size_t);
+
+        struct Shape { const char* name; size_t M; size_t K; };
+        struct Kernel { const char* name; MatvecFn fn; };
+        struct Stats { double median_ms = 0.0; double cv = 0.0; };
+
+        static uint32_t next_rand(uint32_t& s) {
+            s = s * 1664525u + 1013904223u;
+            return s;
+        }
+
+        static bool same_float_bits(float a, float b) {
+            uint32_t ua = 0, ub = 0;
+            std::memcpy(&ua, &a, sizeof(ua));
+            std::memcpy(&ub, &b, sizeof(ub));
+            return ua == ub;
+        }
+
+        static Stats make_stats(std::vector<double> v) {
+            std::sort(v.begin(), v.end());
+            const double median_ms = v[v.size() / 2];
+            const double mean = std::accumulate(v.begin(), v.end(), 0.0) / v.size();
+            if (mean <= 0.0 || v.size() < 2) return {median_ms, 0.0};
+            double sq = 0.0;
+            for (double x : v) sq += (x - mean) * (x - mean);
+            const double sd = std::sqrt(sq / (v.size() - 1));
+            return {median_ms, sd / mean};
+        }
+
+        static double median_value(std::vector<double> v) {
+            if (v.empty()) return 0.0;
+            std::sort(v.begin(), v.end());
+            const size_t n = v.size();
+            if (n % 2 == 1) return v[n / 2];
+            return 0.5 * (v[n / 2 - 1] + v[n / 2]);
+        }
+
+        static bool is_dominant_shape(const char* name) {
+            // Dominant Phase 10 binary-projection shapes: gate/up/down with
+            // both V/U and residual V_R/U_R. In the frozen benchmark table the
+            // eight MLP-dominant rows are the gate.* and down.* entries.
+            return std::strncmp(name, "gate.", 5) == 0 ||
+                   std::strncmp(name, "down.", 5) == 0;
+        }
+
+        static std::string cell(const Stats& s) {
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(3) << s.median_ms
+                << " (CV " << std::setprecision(1) << s.cv * 100.0 << "%)";
+            return oss.str();
+        }
+
+        static void scalar_fn(
+            const int32_t* a, const float* x, float* y, size_t M, size_t K
+        ) {
+            littlebit::detail::scalar_binary_matvec(a, x, y, M, K);
+        }
+
+        int main() {
+            // Frozen Phase 10 shapes; data is generated in-process (no model download).
+            const Shape shapes[] = {
+                {"q.V",      544,  4096}, {"q.U",      4096,   544},
+                {"q.V_R",    544,  4096}, {"q.U_R",    4096,   544},
+                {"gate.V",   824,  4096}, {"gate.U",  12288,   824},
+                {"gate.V_R", 824,  4096}, {"gate.U_R",12288,   824},
+                {"down.V",   824, 12288}, {"down.U",   4096,   824},
+                {"down.V_R", 824, 12288}, {"down.U_R", 4096,   824},
+            };
+            const Kernel kernels[] = {
+                {"scalar",    scalar_fn},
+                {"NEON4",     littlebit::binary_matvec_mult_neon},
+                {"NEON8",     littlebit::bench::neon_variant_8},
+                {"NEON16",    littlebit::bench::neon_variant_16},
+                {"NEON32",    littlebit::bench::neon_variant_32},
+                {"vtst4",     littlebit::bench::neon_variant_vtst},
+                {"prefetch32",littlebit::bench::neon_variant_prefetch},
+            };
+
+            constexpr int rounds = 3;
+            constexpr int reps_per_round = 11;
+            constexpr int warmups = 2;
+            const size_t nshapes = sizeof(shapes) / sizeof(shapes[0]);
+            const size_t nkernels = sizeof(kernels) / sizeof(kernels[0]);
+
+            std::cout << "NEON_AVAILABLE=" << (littlebit::neon_available() ? 1 : 0) << '\n';
+            std::cout << "BENCH_PROTOCOL=warmups=2 rounds=3 reps_per_round=11 interleaved_kernels=yes\n";
+
+            std::vector<std::vector<Stats>> results(nshapes, std::vector<Stats>(nkernels));
+            size_t parity_failures = 0;
+            bool dispatch_ok = true;
+
+            std::cout << "| Shape | M | K";
+            for (const Kernel& k : kernels) std::cout << " | " << k.name << " ms (CV)";
+            std::cout << " | parity |\n|---";
+            for (size_t i = 0; i < nkernels + 3; ++i) std::cout << "|---:";
+            std::cout << "|:---:|\n";
+
+            for (size_t si = 0; si < nshapes; ++si) {
+                const Shape& sh = shapes[si];
+                const size_t words = (sh.K + 31) / 32;
+                uint32_t seed = 0x9e3779b9u ^ static_cast<uint32_t>(sh.M * 131u + sh.K);
+
+                std::vector<int32_t> packed(sh.M * words);
+                for (auto& w : packed) w = static_cast<int32_t>(next_rand(seed));
+
+                std::vector<float> x(sh.K);
+                for (size_t i = 0; i < sh.K; ++i) {
+                    x[i] = static_cast<float>(next_rand(seed) % 65537u) / 4096.0f - 8.0f;
+                }
+
+                std::vector<std::vector<float>> outputs(nkernels, std::vector<float>(sh.M));
+                kernels[0].fn(packed.data(), x.data(), outputs[0].data(), sh.M, sh.K);
+
+                bool shape_parity_ok = true;
+                for (size_t ki = 1; ki < nkernels; ++ki) {
+                    kernels[ki].fn(packed.data(), x.data(), outputs[ki].data(), sh.M, sh.K);
+                    bool kernel_ok = true;
+                    for (size_t i = 0; i < sh.M; ++i) {
+                        if (!same_float_bits(outputs[0][i], outputs[ki][i])) {
+                            kernel_ok = false;
+                        }
+                    }
+                    if (!kernel_ok) {
+                        ++parity_failures;
+                        shape_parity_ok = false;
+                        std::cerr << "PARITY FAIL shape=" << sh.name
+                                  << " kernel=" << kernels[ki].name << '\n';
+                    }
+                }
+
+                std::vector<float> y_dispatch(sh.M);
+                littlebit::binary_matvec_mult(packed.data(), x.data(), y_dispatch.data(), sh.M, sh.K);
+                for (size_t i = 0; i < sh.M; ++i) {
+                    if (!same_float_bits(outputs[0][i], y_dispatch[i])) dispatch_ok = false;
+                }
+                if (!dispatch_ok) {
+                    std::cerr << "DISPATCH MISMATCH shape=" << sh.name << '\n';
+                }
+
+                for (size_t ki = 0; ki < nkernels; ++ki) {
+                    for (int w = 0; w < warmups; ++w) {
+                        kernels[ki].fn(packed.data(), x.data(), outputs[ki].data(), sh.M, sh.K);
+                    }
+                }
+
+                std::vector<std::vector<double>> samples(nkernels);
+                volatile float sink = 0.0f;
+                for (int round = 0; round < rounds; ++round) {
+                    for (int rep = 0; rep < reps_per_round; ++rep) {
+                        for (size_t ki = 0; ki < nkernels; ++ki) {
+                            const auto t0 = Clock::now();
+                            kernels[ki].fn(packed.data(), x.data(), outputs[ki].data(), sh.M, sh.K);
+                            const auto t1 = Clock::now();
+                            samples[ki].push_back(
+                                std::chrono::duration<double, std::milli>(t1 - t0).count()
+                            );
+                            sink += outputs[ki][0];
+                        }
+                    }
+                }
+                (void)sink;
+
+                for (size_t ki = 0; ki < nkernels; ++ki) {
+                    results[si][ki] = make_stats(samples[ki]);
+                }
+
+                std::cout << "| " << sh.name << " | " << sh.M << " | " << sh.K << " |";
+                for (size_t ki = 0; ki < nkernels; ++ki) {
+                    std::cout << " " << cell(results[si][ki]) << " |";
+                }
+                std::cout << " " << (shape_parity_ok ? "OK" : "FAIL") << " |\n";
+            }
+
+            constexpr double high_cv = 0.05;
+            std::vector<Stats> overall(nkernels);
+            std::vector<Stats> dominant(nkernels);
+            std::vector<double> max_cv(nkernels, 0.0);
+            std::vector<bool> dominant_cell_cv_high(nkernels, false);
+            std::vector<std::string> high_cv_warnings;
+
+            for (size_t ki = 0; ki < nkernels; ++ki) {
+                std::vector<double> medians, cvs, dom_medians, dom_cvs;
+                for (size_t si = 0; si < nshapes; ++si) {
+                    const Stats& s = results[si][ki];
+                    medians.push_back(s.median_ms);
+                    cvs.push_back(s.cv);
+                    max_cv[ki] = std::max(max_cv[ki], s.cv);
+                    if (s.cv > high_cv) {
+                        std::ostringstream oss;
+                        oss << "CV_WARNING=shape=" << shapes[si].name
+                            << " kernel=" << kernels[ki].name
+                            << " cv=" << std::fixed << std::setprecision(1)
+                            << s.cv * 100.0 << "%";
+                        high_cv_warnings.push_back(oss.str());
+                    }
+                    if (is_dominant_shape(shapes[si].name)) {
+                        dom_medians.push_back(s.median_ms);
+                        dom_cvs.push_back(s.cv);
+                        if (s.cv > high_cv) dominant_cell_cv_high[ki] = true;
+                    }
+                }
+                overall[ki] = make_stats(medians);
+                dominant[ki] = make_stats(dom_medians);
+                overall[ki].cv = median_value(cvs);
+                dominant[ki].cv = median_value(dom_cvs);
+            }
+
+            bool dominant_cv_high = false;
+            for (size_t ki = 0; ki < nkernels; ++ki) {
+                // Dominant cells are not hidden by the median; a single noisy
+                // dominant cell also makes the verdict inconclusive.
+                if (dominant_cell_cv_high[ki] || dominant[ki].cv > high_cv) {
+                    dominant_cv_high = true;
+                }
+            }
+
+            for (const std::string& warning : high_cv_warnings) {
+                std::cout << warning << '\n';
+            }
+            for (size_t ki = 0; ki < nkernels; ++ki) {
+                std::cout << "CV_MAX_NOTE=kernel=" << kernels[ki].name
+                          << " max_cv=" << std::fixed << std::setprecision(1)
+                          << max_cv[ki] * 100.0 << "% (note only)\n";
+            }
+
+            const double scalar_overall = overall[0].median_ms;
+            const double neon4_overall = overall[1].median_ms;
+            const double scalar_dominant = dominant[0].median_ms;
+            const double neon4_dominant = dominant[1].median_ms;
+
+            std::cout << "\n| Overall | median ms | speedup vs scalar | speedup vs NEON4 | dominant median ms | dominant vs scalar | dominant vs NEON4 | median CV | dominant median CV | verdict |\n";
+            std::cout << "|---|---:|---:|---:|---:|---:|---:|---:|---:|:---:|\n";
+            for (size_t ki = 0; ki < nkernels; ++ki) {
+                const double vs_scalar = overall[ki].median_ms > 0.0
+                    ? scalar_overall / overall[ki].median_ms : 0.0;
+                const double vs_neon4 = overall[ki].median_ms > 0.0
+                    ? neon4_overall / overall[ki].median_ms : 0.0;
+                const double dom_vs_scalar = dominant[ki].median_ms > 0.0
+                    ? scalar_dominant / dominant[ki].median_ms : 0.0;
+                const double dom_vs_neon4 = dominant[ki].median_ms > 0.0
+                    ? neon4_dominant / dominant[ki].median_ms : 0.0;
+
+                std::string verdict = "baseline";
+                if (ki > 1) {
+                    const double threshold = 1.0 + 3.0 * std::sqrt(
+                        dominant[ki].cv * dominant[ki].cv +
+                        dominant[1].cv * dominant[1].cv
+                    );
+                    const bool accepted = dom_vs_neon4 > threshold && dom_vs_neon4 > 1.05;
+                    verdict = dominant_cv_high ? "INCONCLUSIVE" : (accepted ? "ACCEPT" : "REJECT");
+                    std::cout << "ACCEPT_" << kernels[ki].name << "=" << verdict
+                              << " dominant_ratio=" << std::fixed << std::setprecision(3)
+                              << dom_vs_neon4 << " threshold=" << threshold
+                              << " cv=" << dominant[ki].cv
+                              << " neon4_cv=" << dominant[1].cv << '\n';
+                }
+
+                std::cout << "| " << kernels[ki].name << " | " << std::setprecision(3)
+                          << overall[ki].median_ms << " | " << std::setprecision(2) << vs_scalar
+                          << "x | " << vs_neon4 << "x | " << std::setprecision(3)
+                          << dominant[ki].median_ms << " | " << std::setprecision(2)
+                          << dom_vs_scalar << "x | " << dom_vs_neon4 << "x | "
+                          << std::fixed << std::setprecision(1)
+                          << overall[ki].cv * 100.0 << "% | "
+                          << dominant[ki].cv * 100.0 << "% | " << verdict << " |\n";
+            }
+
+            std::string bench_verdict = "OK";
+            if (parity_failures != 0 || !dispatch_ok) bench_verdict = "FAIL";
+            else if (dominant_cv_high) bench_verdict = "INCONCLUSIVE";
+
+            std::cout << "NEON_AVAILABLE=" << (littlebit::neon_available() ? 1 : 0) << '\n';
+            std::cout << "PARITY_FAILURES=" << parity_failures << '\n';
+            std::cout << "DISPATCH_MATCHES_SCALAR=" << (dispatch_ok ? "yes" : "no") << '\n';
+            std::cout << "DISPATCH_MATCHES_NEON=" << (dispatch_ok ? "yes" : "no") << '\n';
+            std::cout << "DOMINANT_CV_HIGH=" << (dominant_cv_high ? "yes" : "no") << '\n';
+            std::cout << "BENCH_VERDICT=" << bench_verdict << '\n';
+
+            return (parity_failures == 0 && dispatch_ok) ? 0 : 1;
+        }
+        CPP
+
+        g++ -std=c++17 -O3 -Wall -Wextra -fno-fast-math -ffp-contract=off \
+          -Iinclude "$RUNNER_TEMP/neon_variants_bench.cpp" build-arm64/liblittlebit_engine.a \
+          -o "$RUNNER_TEMP/neon_variants_bench"
+
+        set +e
+        "$RUNNER_TEMP/neon_variants_bench" > bench-variants.log 2>&1
+        code=$?
+        cat bench-variants.log
+        grep -E '^\|' bench-variants.log > bench.md || true
+        grep -E '^(NEON_AVAILABLE|BENCH_PROTOCOL|PARITY_FAILURES|DISPATCH_MATCHES_SCALAR|DISPATCH_MATCHES_NEON|DOMINANT_CV_HIGH|BENCH_VERDICT|ACCEPT_)=' bench-variants.log > bench-flags.txt || true
+        exit $code
+
+    - name: Check ordered FP instruction set in NEON disassembly
+      id: disasm
+      if: always()
+      run: |
+        set +e
+        objdump -d -C build-arm64/liblittlebit_engine.a > neon-disasm.txt 2> neon-disasm-err.txt
+        objdump_code=$?
+
+        mkdir -p "$RUNNER_TEMP/neon-disasm-fixtures"
+        cat > "$RUNNER_TEMP/neon_disasm_check.py" <<'PY'
+        import re
+        import sys
+
+        WANT = ("binary_matvec_mult_neon", "neon_variant_", "neon_rows")
+        FMA_OPS = ("fmla", "fmls", "fmadd", "fmsub", "fnmadd", "fnmsub")
+
+        path = sys.argv[1] if len(sys.argv) > 1 else "neon-disasm.txt"
+        text = open(path, errors="replace").read()
+
+        func_re = re.compile(r"^[0-9a-fA-F]+ <(.+)>:\s*$")
+        insn_re = re.compile(r"^\s*[0-9a-fA-F]+:\s+[0-9a-fA-F]+\s+([a-z0-9]+)\s+(.*)$")
+        reg_re = re.compile(r"\bv(\d+)\b")
+
+        blocks = []
+        name = None
+        lines = []
+        for line in text.splitlines():
+            match = func_re.match(line)
+            if match:
+                if name is not None:
+                    blocks.append((name, lines))
+                name = match.group(1)
+                lines = []
+                continue
+            if name is not None:
+                lines.append(line)
+        if name is not None:
+            blocks.append((name, lines))
+
+        selected = [(n, ls) for n, ls in blocks if any(w in n for w in WANT)]
+        problems = []
+        order_warnings = []
+        fadd_count = 0
+        fsub_count = 0
+        fma_count = 0
+        unverified_count = 0
+
+        for fname, flines in selected:
+            acc = set()
+            vx = set()
+            for raw in flines:
+                match = insn_re.match(raw)
+                if not match:
+                    continue
+                op, operands = match.groups()
+                regs = [int(r) for r in reg_re.findall(operands)]
+                stripped = raw.strip()
+
+                if any(op.startswith(prefix) for prefix in FMA_OPS):
+                    fma_count += 1
+                    problems.append(
+                        f"{fname}: forbidden FMA-family instruction '{stripped}'; "
+                        "expected no fmla/fmls/fmadd/fmsub/fnmadd/fnmsub"
+                    )
+                    continue
+
+                if op in ("movi", "fmov") and "#0" in operands and regs:
+                    acc.add(regs[0])
+                elif op == "dup" and regs:
+                    if "wzr" in operands or "#0" in operands:
+                        acc.add(regs[0])
+                    else:
+                        vx.add(regs[0])
+                elif op == "ld1r" and regs:
+                    vx.add(regs[0])
+                elif op == "eor" and len(regs) >= 3:
+                    if regs[1] == regs[2] and regs[1] not in acc:
+                        acc.add(regs[0])
+                    elif regs[1] in acc and regs[2] in acc:
+                        acc.add(regs[0])
+                elif op in ("mov", "orr") and len(regs) >= 2 and any(r in acc for r in regs[1:]):
+                    acc.add(regs[0])
+                elif op == "bsl" and len(regs) >= 3 and any(r in acc for r in regs[1:]):
+                    acc.add(regs[0])
+                elif op in ("fadd", "fsub"):
+                    if op == "fadd":
+                        fadd_count += 1
+                    else:
+                        fsub_count += 1
+                    if len(regs) < 3:
+                        unverified_count += 1
+                        order_warnings.append(
+                            f"{fname}: ORDER_UNVERIFIED malformed {op} '{stripped}'; "
+                            "expected 'fadd/fsub dst.4s, acc.4s, vx.4s'"
+                        )
+                        continue
+                    dst, src1, src2 = regs[0], regs[1], regs[2]
+                    if src1 in acc:
+                        pass
+                    elif src1 in vx and src2 in acc:
+                        problems.append(
+                            f"{fname}: provable operand swap in '{stripped}': src1 v{src1} "
+                            f"is a known vx register and src2 v{src2} is a known accumulator; "
+                            "expected accumulator as src1"
+                        )
+                    else:
+                        unverified_count += 1
+                        order_warnings.append(
+                            f"{fname}: ORDER_UNVERIFIED in '{stripped}': src1 v{src1} could "
+                            "not be proven to be an accumulator; expected accumulator as src1"
+                        )
+                    acc.add(dst)
+
+        if not selected:
+            problems.append(
+                "no NEON kernel functions found in objdump output; expected functions matching "
+                + ", ".join(WANT)
+            )
+        if fadd_count + fsub_count == 0:
+            problems.append(
+                "no fadd/fsub instructions found across selected NEON functions; expected at "
+                "least one ordered FP add/sub"
+            )
+
+        print(f"DISASM_FUNCTIONS={len(selected)}")
+        print(f"DISASM_FADD={fadd_count}")
+        print(f"DISASM_FSUB={fsub_count}")
+        print(f"DISASM_FMA={fma_count}")
+        print(f"DISASM_ORDER_UNVERIFIED={unverified_count}")
+        for problem in problems:
+            print("DISASM_PROBLEM=" + problem)
+        if unverified_count:
+            print(f"DISASM_WARNING=ORDER_UNVERIFIED ({unverified_count} instructions)")
+        for warning in order_warnings:
+            print("DISASM_ORDER_WARNING=" + warning)
+        if problems:
+            print("DISASM_CHECK=FAIL")
+            sys.exit(1)
+        if order_warnings:
+            print("DISASM_CHECK=PASS_WITH_WARNINGS")
+        else:
+            print("DISASM_CHECK=PASS")
+        sys.exit(0)
+        PY
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/ok.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_4(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	a9bf7bfd 	stp	x29, x30, [sp, #-16]!
+           4:	910003fd 	mov	x29, sp
+           8:	4e020c10 	movi	v16.4s, #0
+           c:	4e041c11 	dup	v17.4s, w2
+          10:	4e211212 	fadd	v18.4s, v16.4s, v17.4s
+          14:	4e221213 	fsub	v19.4s, v16.4s, v17.4s
+          18:	6e191210 	bsl	v16.16b, v19.16b, v18.16b
+          1c:	d65f03c0 	ret
+        EOF
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/fma.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_8(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	4e020c10 	movi	v16.4s, #0
+           4:	4e041c11 	dup	v17.4s, w2
+           8:	4e211a12 	fmla	v18.4s, v16.4s, v17.4s
+           c:	4e221213 	fsub	v19.4s, v16.4s, v17.4s
+          10:	d65f03c0 	ret
+        EOF
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/swap.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_16(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	4e020c10 	movi	v16.4s, #0
+           4:	4e041c11 	dup	v17.4s, w2
+           8:	4e211212 	fadd	v18.4s, v17.4s, v16.4s
+           c:	d65f03c0 	ret
+        EOF
+
+        cat > "$RUNNER_TEMP/neon-disasm-fixtures/wrapper.txt" <<'EOF'
+        build-arm64/liblittlebit_engine.a:binary_packer_neon.cpp.o: file format elf64-littleaarch64
+
+        Disassembly of section .text:
+
+        0000000000000000 <littlebit::bench::neon_variant_32(int const*, float const*, float*, unsigned long, unsigned long)>:
+           0:	94000000 	bl	0 <littlebit::neon_rows_group<8, false, false>(int const*, float const*, float*, unsigned long, unsigned long)>
+           4:	d65f03c0 	ret
+
+        0000000000000040 <littlebit::neon_rows_group<8, false, false>(int const*, float const*, float*, unsigned long, unsigned long)>:
+          40:	4e020c10 	movi	v16.4s, #0
+          44:	4e041c11 	dup	v17.4s, w2
+          48:	4e211212 	fadd	v18.4s, v16.4s, v17.4s
+          4c:	d65f03c0 	ret
+        EOF
+
+        selftest_fail=0
+        run_fixture() {
+          fixture="$1"
+          expected_rc="$2"
+          expected_verdict="$3"
+          out="neon-disasm-selftest-$fixture.txt"
+          python3 "$RUNNER_TEMP/neon_disasm_check.py" "$RUNNER_TEMP/neon-disasm-fixtures/$fixture.txt" > "$out" 2>&1
+          rc=$?
+          verdict=$(grep '^DISASM_CHECK=' "$out" | tail -1 | cut -d= -f2)
+          cat "$out"
+          if [ "$rc" -ne "$expected_rc" ] || [ "$verdict" != "$expected_verdict" ]; then
+            echo "SELFTEST_FAIL=$fixture expected rc=$expected_rc verdict=$expected_verdict got rc=$rc verdict=$verdict"
+            selftest_fail=1
+          else
+            echo "SELFTEST_PASS=$fixture verdict=$verdict"
+          fi
+        }
+
+        run_fixture ok 0 PASS
+        run_fixture fma 1 FAIL
+        run_fixture swap 1 FAIL
+        run_fixture wrapper 0 PASS
+
+        if grep -q '^DISASM_FMA=[1-9]' neon-disasm-selftest-fma.txt; then
+          echo 'SELFTEST_PASS=fma count'
+        else
+          echo 'SELFTEST_FAIL=fma count'
+          selftest_fail=1
+        fi
+        if grep -q 'provable operand swap' neon-disasm-selftest-swap.txt; then
+          echo 'SELFTEST_PASS=swap diagnosis'
+        else
+          echo 'SELFTEST_FAIL=swap diagnosis'
+          selftest_fail=1
+        fi
+
+        python3 "$RUNNER_TEMP/neon_disasm_check.py" neon-disasm.txt > neon-disasm-check.txt 2>&1
+        check_code=$?
+
+        cat neon-disasm-check.txt
+        grep -E '^(DISASM_FUNCTIONS|DISASM_FADD|DISASM_FSUB|DISASM_FMA|DISASM_ORDER_UNVERIFIED|DISASM_CHECK|DISASM_PROBLEM|DISASM_WARNING|DISASM_ORDER_WARNING)=' neon-disasm-check.txt > disasm-flags.txt || true
+
+        if [ $objdump_code -ne 0 ]; then exit $objdump_code; fi
+        if [ "$selftest_fail" -ne 0 ]; then exit 1; fi
+        exit $check_code
+
+    - name: Write job summary
+      if: always()
+      run: |
+        {
+          echo "## ARM64 NEON run summary"
+          echo
+          echo "- Runner arch: \`$(uname -m)\`"
+          echo "- Compiler: \`$(g++ --version | head -1)\`"
+          echo "- NEON available: \`$(grep '^NEON_AVAILABLE=' bench-flags.txt 2>/dev/null | tail -1 | cut -d= -f2 || echo unknown)\`"
+          echo "- ARM64 engine binary matvec dispatch: \`$(grep -q 'bench::neon_variant_32' src/binary_packer.cpp && echo 'NEON32 (littlebit::bench::neon_variant_32)' || echo unknown)\` when \`LITTLEBIT_DISABLE_NEON\` is unset; frozen scalar fallback when set."
+          echo "- NEON dispatch matches scalar oracle: \`$(grep '^DISPATCH_MATCHES_NEON=' bench-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          echo "- ctest (NEON enabled): ${{ steps.ctest_neon.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_neon.outputs.code || 'n/a' }}\`)"
+          echo "- ctest (NEON disabled): ${{ steps.ctest_scalar.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_scalar.outputs.code || 'n/a' }}\`)"
+          echo "- Test 7 raw-bit parity: ${{ steps.test7.outputs.result || 'unknown' }} (${{ steps.test7.outputs.cases || '0' }} cases)"
+          echo "- Ordered FP disassembly check: \`$(grep '^DISASM_CHECK=' disasm-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
+          if [ -s disasm-flags.txt ]; then
+            grep -E '^(DISASM_FUNCTIONS|DISASM_FADD|DISASM_FSUB|DISASM_FMA|DISASM_ORDER_UNVERIFIED|DISASM_WARNING)=' disasm-flags.txt | sed 's/^/- /'
+            grep -E '^DISASM_(PROBLEM|ORDER_WARNING)=' disasm-flags.txt | sed 's/^/- /'
+          else
+            echo "- _disassembly flags unavailable_"
+          fi
+          echo
+          echo "### Benchmark acceptance"
+          echo
+          echo "- Verdict inputs: median CV per kernel and dominant Phase 10 gate/up/down V/U and V_R/U_R cells."
+          echo "- Any dominant cell CV > 5% forces \`INCONCLUSIVE\`; per-kernel max CV is a note only."
+          if [ -s bench-flags.txt ]; then grep -E '^(BENCH_PROTOCOL|PARITY_FAILURES|DOMINANT_CV_HIGH|BENCH_VERDICT|ACCEPT_)=' bench-flags.txt | sed 's/^/- /'; else echo "- _benchmark flags unavailable_"; fi
+          echo
+          echo "#### High-CV cell warnings (every cell > 5%)"
+          echo
+          if [ -s bench-variants.log ] && grep -q '^CV_WARNING=' bench-variants.log; then
+            grep '^CV_WARNING=' bench-variants.log | sed 's/^CV_WARNING=/- WARNING: high-CV cell: /'
+          else
+            echo "- None: no cell exceeded 5% CV."
+          fi
+          echo
+          echo "#### Per-kernel max CV (notes only)"
+          echo
+          if [ -s bench-variants.log ] && grep -q '^CV_MAX_NOTE=' bench-variants.log; then
+            grep '^CV_MAX_NOTE=' bench-variants.log | sed 's/^CV_MAX_NOTE=/- Note: /'
+          else
+            echo "- _per-kernel max CV unavailable_"
+          fi
+          echo
+          echo "### Binary matvec microbenchmark"
+          echo
+          echo "Synthetic in-process packed matrices/inputs for the 12 frozen Phase 10 shapes. No model download or real checkpoint was used."
+          echo
+          if [ -s bench.md ]; then cat bench.md; else echo "_benchmark output unavailable_"; fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload logs and benchmark output
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: arm64-neon-logs
+        path: |
+          ctest-neon.log
+          ctest-scalar.log
+          test7.log
+          bench-variants.log
+          bench.md
+          bench-flags.txt
+          neon-disasm.txt
+          neon-disasm-err.txt
+          neon-disasm-check.txt
+          neon-disasm-selftest-*.txt
+          disasm-flags.txt
+        if-no-files-found: warn
+
+  x86-regression:
+    name: x86 Release regression
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++
+
+    - name: Configure CMake (Release)
+      run: cmake -S . -B build-x86 -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build C++ engine and tests
+      run: cmake --build build-x86 --config Release -j2
+
+    - name: Run tests
+      run: ctest --test-dir build-x86 --output-on-failure

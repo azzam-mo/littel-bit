@@ -9,16 +9,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-g -O0 -Wall -Wextra)
 else()
-    add_compile_options(-O3 -march=native -Wall -Wextra)
+    add_compile_options(-O3 -Wall -Wextra)
 endif()
+
+# Bit-exact kernels must not be reassociated or contracted into FMAs.
+add_compile_options(-fno-fast-math -ffp-contract=off)
 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Engine Core Library
-add_library(littlebit_engine STATIC
+set(ENGINE_SOURCES
     src/binary_packer.cpp
+    src/scalar_kernels.cpp
     src/linear.cpp
     src/safetensors.cpp
     src/tokenizer.cpp
@@ -28,6 +32,20 @@ add_library(littlebit_engine STATIC
     src/transformer_block.cpp
     src/model.cpp
 )
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+    list(APPEND ENGINE_SOURCES
+        src/binary_packer_neon.cpp
+        src/lm_head_scalar.cpp
+    )
+else()
+    list(APPEND ENGINE_SOURCES
+        src/binary_packer_avx2.cpp
+        src/lm_head_avx2.cpp
+    )
+endif()
+
+add_library(littlebit_engine STATIC ${ENGINE_SOURCES})
 
 # Unit Tests
 enable_testing()
@@ -92,3 +110,6 @@ target_link_libraries(real_model_smoke PRIVATE littlebit_engine)
 
 add_executable(perf_benchmark tests/perf_benchmark.cpp)
 target_link_libraries(perf_benchmark PRIVATE littlebit_engine)
+
+add_executable(binary_matvec_probe tests/binary_matvec_probe.cpp)
+target_link_libraries(binary_matvec_probe PRIVATE littlebit_engine)

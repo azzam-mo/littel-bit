@@ -13,6 +13,7 @@ lib/
 *.pt
 model-configs/
 weights/
+artifacts/
 
 # macOS / Xcode
 .DS_Store

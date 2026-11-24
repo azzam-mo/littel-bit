@@ -1,0 +1,25 @@
+{
+  "model_dir": "/home/mrdp_24193/Documents/deepseek-harness/default-workspace/littel-bit/artifacts",
+  "V": 151936,
+  "H": 4096,
+  "bytes_per_call": 1244659712,
+  "rounds": 6,
+  "special_sweep": false,
+  "real_exact_engine_avx2": true,
+  "real_exact_local_oracle": true,
+  "real_exact_candidates": true,
+  "timings": [
+    {"name": "engine_avx2", "median_ms": 96.053773, "GB_per_s": 12.957947},
+    {"name": "scalar", "median_ms": 512.959481, "GB_per_s": 2.426429},
+    {"name": "transpose8", "median_ms": 100.659250, "GB_per_s": 12.365080},
+    {"name": "transpose16wide", "median_ms": 98.155702, "GB_per_s": 12.680463},
+    {"name": "transpose16", "median_ms": 147.685534, "GB_per_s": 8.427770},
+    {"name": "transpose16_pipe", "median_ms": 150.469343, "GB_per_s": 8.271849},
+    {"name": "independent_rows", "median_ms": 211.280731, "GB_per_s": 5.891023},
+    {"name": "memory_only", "median_ms": 42.973566, "GB_per_s": 28.963380},
+    {"name": "convert_only", "median_ms": 45.681098, "GB_per_s": 27.246712}
+  ],
+  "convert_only_ms": 46.164819,
+  "multiply_only_ms": 162.999833,
+  "sink": 377271255040.000000
+}

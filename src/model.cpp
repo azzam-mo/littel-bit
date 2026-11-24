@@ -1,9 +1,14 @@
 #include "littlebit/model.h"
+#include "lm_head_avx2.h"
 #include "nlohmann/json.hpp"
 
 #include <fstream>
 #include <iostream>
 #include <chrono>
+#include <cmath>
+#include <cstring>
+#include <initializer_list>
+#include <sstream>
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -13,6 +18,412 @@
 #endif
 
 namespace littlebit {
+
+namespace {
+
+struct LittleBitCheckpointMeta {
+    bool residual = false;
+};
+
+const char* dtype_name(DType dtype) {
+    switch (dtype) {
+        case DType::BF16: return "BF16";
+        case DType::F16:  return "F16";
+        case DType::F32:  return "F32";
+        case DType::I32:  return "I32";
+        case DType::I64:  return "I64";
+        case DType::U8:   return "U8";
+        default:          return "UNKNOWN";
+    }
+}
+
+size_t dtype_item_size(DType dtype) {
+    switch (dtype) {
+        case DType::BF16:
+        case DType::F16:  return 2;
+        case DType::F32:
+        case DType::I32:  return 4;
+        case DType::I64:  return 8;
+        case DType::U8:   return 1;
+        default:          return 0;
+    }
+}
+
+std::string shape_to_string(const std::vector<int64_t>& shape) {
+    std::ostringstream os;
+    os << '[';
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i) os << ',';
+        os << shape[i];
+    }
+    os << ']';
+    return os.str();
+}
+
+bool shape_equals(const SafeTensorInfo& info, std::initializer_list<int64_t> expected) {
+    if (info.shape.size() != expected.size()) return false;
+    size_t i = 0;
+    for (int64_t dim : expected) {
+        if (info.shape[i++] != dim) return false;
+    }
+    return true;
+}
+
+bool has_float_dtype(DType dtype) {
+    return dtype == DType::BF16 || dtype == DType::F16 || dtype == DType::F32;
+}
+
+bool tensor_has_data(const SafeTensorInfo& info, const std::string& name, std::string& err) {
+    if (!info.data_ptr) {
+        err = "Tensor has no mapped data: " + name;
+        return false;
+    }
+    return true;
+}
+
+bool check_packed_tensor(
+    const SafeTensorsFile& weights, const std::string& name,
+    int64_t rows, int64_t words_per_row, std::string& err
+) {
+    if (!weights.has_tensor(name)) {
+        err = "Missing LittleBit tensor: " + name;
+        return false;
+    }
+    const auto& info = weights.get_tensor_info(name);
+    if (info.dtype != DType::I32) {
+        err = "Expected I32 for " + name + ", got " + dtype_name(info.dtype);
+        return false;
+    }
+    if (!shape_equals(info, {rows, words_per_row})) {
+        err = "Unexpected shape for " + name + ": " + shape_to_string(info.shape) +
+              ", expected [" + std::to_string(rows) + ',' + std::to_string(words_per_row) + ']';
+        return false;
+    }
+    const size_t expected_bytes = static_cast<size_t>(rows) * static_cast<size_t>(words_per_row) * sizeof(int32_t);
+    if (info.byte_size() != expected_bytes) {
+        err = "Unexpected byte size for " + name + ": " + std::to_string(info.byte_size()) +
+              ", expected " + std::to_string(expected_bytes);
+        return false;
+    }
+    return tensor_has_data(info, name, err);
+}
+
+bool check_float_tensor(
+    const SafeTensorsFile& weights, const std::string& name,
+    int64_t expected_numel, std::string& err
+) {
+    if (!weights.has_tensor(name)) {
+        err = "Missing LittleBit tensor: " + name;
+        return false;
+    }
+    const auto& info = weights.get_tensor_info(name);
+    if (!has_float_dtype(info.dtype)) {
+        err = "Expected BF16/F16/F32 scale for " + name + ", got " + dtype_name(info.dtype);
+        return false;
+    }
+    if (static_cast<int64_t>(info.numel()) != expected_numel) {
+        err = "Unexpected scale length for " + name + ": " + std::to_string(info.numel()) +
+              ", expected " + std::to_string(expected_numel);
+        return false;
+    }
+    const size_t expected_bytes = info.numel() * dtype_item_size(info.dtype);
+    if (info.byte_size() != expected_bytes) {
+        err = "Unexpected byte size for " + name + ": " + std::to_string(info.byte_size()) +
+              ", expected " + std::to_string(expected_bytes);
+        return false;
+    }
+    return tensor_has_data(info, name, err);
+}
+
+bool read_i64_scalar(
+    const SafeTensorsFile& weights, const std::string& name,
+    int64_t& value, std::string& err
+) {
+    if (!weights.has_tensor(name)) {
+        err = "Missing LittleBit metadata tensor: " + name;
+        return false;
+    }
+    const auto& info = weights.get_tensor_info(name);
+    if (info.dtype != DType::I64) {
+        err = "Expected I64 for " + name + ", got " + dtype_name(info.dtype);
+        return false;
+    }
+    if (!info.shape.empty()) {
+        err = "Expected scalar shape [] for " + name + ", got " + shape_to_string(info.shape);
+        return false;
+    }
+    if (info.byte_size() < sizeof(int64_t) || !tensor_has_data(info, name, err)) return false;
+    std::memcpy(&value, info.data_ptr, sizeof(int64_t));
+    return true;
+}
+
+bool read_i64_pair(
+    const SafeTensorsFile& weights, const std::string& name,
+    std::vector<int64_t>& values, std::string& err
+) {
+    if (!weights.has_tensor(name)) {
+        err = "Missing LittleBit metadata tensor: " + name;
+        return false;
+    }
+    const auto& info = weights.get_tensor_info(name);
+    if (info.dtype != DType::I64) {
+        err = "Expected I64 for " + name + ", got " + dtype_name(info.dtype);
+        return false;
+    }
+    if (!shape_equals(info, {2})) {
+        err = "Expected shape [2] for " + name + ", got " + shape_to_string(info.shape);
+        return false;
+    }
+    if (info.byte_size() < 2 * sizeof(int64_t) || !tensor_has_data(info, name, err)) return false;
+    values.resize(2);
+    std::memcpy(values.data(), info.data_ptr, 2 * sizeof(int64_t));
+    return true;
+}
+
+bool validate_littlebit_config(
+    const std::string& model_dir, LittleBitCheckpointMeta& meta, std::string& err
+) {
+    const std::string path = model_dir + "/littlebit_config.json";
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        err = "Missing " + path + "; this loader requires a converted LittleBit checkpoint, not plain Qwen3 weights.";
+        return false;
+    }
+
+    nlohmann::json lb;
+    try {
+        in >> lb;
+    } catch (const std::exception& e) {
+        err = "Failed to parse " + path + ": " + e.what();
+        return false;
+    }
+
+    const std::string quant_mod = lb.value("quant_mod", "");
+    if (quant_mod != "LittleBitLinear") {
+        err = path + ": quant_mod must be \"LittleBitLinear\", got \"" + quant_mod + "\".";
+        return false;
+    }
+    if (lb.value("quant_func", "").empty()) {
+        err = path + ": missing quant_func.";
+        return false;
+    }
+    if (!lb.contains("eff_bit") || !lb["eff_bit"].is_number()) {
+        err = path + ": missing or invalid eff_bit.";
+        return false;
+    }
+    const double eff_bit = lb["eff_bit"].get<double>();
+    if (!std::isfinite(eff_bit) || eff_bit <= 0.0 || eff_bit > 2.0) {
+        err = path + ": eff_bit must be in (0, 2].";
+        return false;
+    }
+    if (!lb.contains("residual") || !lb["residual"].is_boolean()) {
+        err = path + ": missing or invalid residual flag.";
+        return false;
+    }
+    meta.residual = lb["residual"].get<bool>();
+    if (!lb.contains("use_itq") || !lb["use_itq"].is_boolean()) {
+        err = path + ": missing or invalid use_itq flag.";
+        return false;
+    }
+    if (!lb.contains("split_dim") || !lb["split_dim"].is_number_integer() ||
+        lb["split_dim"].get<int64_t>() <= 0) {
+        err = path + ": missing or invalid split_dim.";
+        return false;
+    }
+    if (!lb.contains("min_split_dim") || !lb["min_split_dim"].is_number_integer() ||
+        lb["min_split_dim"].get<int64_t>() <= 0) {
+        err = path + ": missing or invalid min_split_dim.";
+        return false;
+    }
+    if (!lb.contains("kv_factor") || !lb["kv_factor"].is_number() ||
+        lb["kv_factor"].get<double>() <= 0.0) {
+        err = path + ": missing or invalid kv_factor.";
+        return false;
+    }
+    if (!lb.contains("itq_n_iter") || !lb["itq_n_iter"].is_number_integer() ||
+        lb["itq_n_iter"].get<int64_t>() < 0) {
+        err = path + ": missing or invalid itq_n_iter.";
+        return false;
+    }
+
+    // config.json duplicates these LittleBit knobs in the real release; require
+    // agreement when both files define a key.
+    std::ifstream cfg_in(model_dir + "/config.json");
+    if (cfg_in.is_open()) {
+        try {
+            nlohmann::json cfg;
+            cfg_in >> cfg;
+            const char* keys[] = {
+                "quant_func", "eff_bit", "split_dim", "residual", "kv_factor",
+                "min_split_dim", "quant_mod", "use_itq", "itq_n_iter"
+            };
+            for (const char* key : keys) {
+                if (lb.contains(key) && cfg.contains(key) && lb[key] != cfg[key]) {
+                    err = std::string(path) + " disagrees with config.json on '" + key + "'.";
+                    return false;
+                }
+            }
+        } catch (const std::exception&) {
+            // config.json parse failure is already warned about by load().
+        }
+    }
+    return true;
+}
+
+bool has_littlebit_packed_tensors(const SafeTensorsFile& weights) {
+    for (const auto& kv : weights.all_tensors()) {
+        if (kv.first.find(".U_packed") != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool has_plain_qwen3_linears(const SafeTensorsFile& weights) {
+    if (weights.has_tensor("model.layers.0.self_attn.q_proj.weight")) return true;
+    for (const auto& kv : weights.all_tensors()) {
+        if (kv.first.find(".self_attn.q_proj.weight") != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool vectors_equal(const std::vector<int64_t>& a, const std::vector<int64_t>& b) {
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(int64_t)) == 0;
+}
+
+bool validate_littlebit_tensors(
+    const SafeTensorsFile& weights, const ModelConfig& config,
+    bool residual, std::string& err
+) {
+    struct ProjSpec {
+        const char* name;
+        int64_t in;
+        int64_t out;
+    };
+
+    const int64_t hidden = static_cast<int64_t>(config.hidden_size);
+    const int64_t kv_dim = static_cast<int64_t>(config.num_key_value_heads * config.head_dim);
+    const int64_t inter = static_cast<int64_t>(config.intermediate_size);
+    const std::vector<ProjSpec> specs = {
+        {"self_attn.q_proj", hidden, hidden},
+        {"self_attn.k_proj", hidden, kv_dim},
+        {"self_attn.v_proj", hidden, kv_dim},
+        {"self_attn.o_proj", hidden, hidden},
+        {"mlp.gate_proj", hidden, inter},
+        {"mlp.up_proj", hidden, inter},
+        {"mlp.down_proj", inter, hidden},
+    };
+
+    size_t validated = 0;
+    for (size_t layer = 0; layer < config.num_hidden_layers; ++layer) {
+        for (const auto& spec : specs) {
+            const std::string prefix = "model.layers." + std::to_string(layer) + "." + spec.name;
+            const std::string where = prefix;
+
+            std::vector<std::string> required = {
+                prefix + ".U_packed", prefix + ".V_packed",
+                prefix + ".U_shape", prefix + ".V_shape",
+                prefix + "._split_dim_final",
+                prefix + ".u1", prefix + ".u2", prefix + ".v1", prefix + ".v2",
+            };
+            if (residual) {
+                required.insert(required.end(), {
+                    prefix + ".U_R_packed", prefix + ".V_R_packed",
+                    prefix + ".U_R_shape", prefix + ".V_R_shape",
+                    prefix + ".u1_R", prefix + ".u2_R", prefix + ".v1_R", prefix + ".v2_R",
+                });
+            }
+            for (const auto& name : required) {
+                if (!weights.has_tensor(name)) {
+                    err = where + ": missing required LittleBit tensor " + name;
+                    return false;
+                }
+            }
+
+            std::vector<int64_t> u_shape, v_shape;
+            if (!read_i64_pair(weights, prefix + ".U_shape", u_shape, err) ||
+                !read_i64_pair(weights, prefix + ".V_shape", v_shape, err)) {
+                return false;
+            }
+            int64_t split = 0;
+            if (!read_i64_scalar(weights, prefix + "._split_dim_final", split, err)) return false;
+
+            if (split <= 0 || u_shape[1] != split || v_shape[0] != split) {
+                err = where + ": split metadata disagrees: U_shape=" + shape_to_string(u_shape) +
+                      ", V_shape=" + shape_to_string(v_shape) + ", _split_dim_final=" +
+                      std::to_string(split);
+                return false;
+            }
+            if (u_shape[0] != spec.out || v_shape[1] != spec.in) {
+                err = where + ": logical shape mismatch: U_shape=" + shape_to_string(u_shape) +
+                      ", V_shape=" + shape_to_string(v_shape) + ", expected out=" +
+                      std::to_string(spec.out) + ", in=" + std::to_string(spec.in);
+                return false;
+            }
+
+            const int64_t u_words = (split + 31) / 32;
+            const int64_t v_words = (spec.in + 31) / 32;
+            if (!check_packed_tensor(weights, prefix + ".U_packed", u_shape[0], u_words, err) ||
+                !check_packed_tensor(weights, prefix + ".V_packed", v_shape[0], v_words, err)) {
+                return false;
+            }
+            if (!check_float_tensor(weights, prefix + ".u1", u_shape[0], err) ||
+                !check_float_tensor(weights, prefix + ".u2", split, err) ||
+                !check_float_tensor(weights, prefix + ".v1", split, err) ||
+                !check_float_tensor(weights, prefix + ".v2", spec.in, err)) {
+                return false;
+            }
+
+            if (residual) {
+                std::vector<int64_t> u_r_shape, v_r_shape;
+                if (!read_i64_pair(weights, prefix + ".U_R_shape", u_r_shape, err) ||
+                    !read_i64_pair(weights, prefix + ".V_R_shape", v_r_shape, err)) {
+                    return false;
+                }
+                if (!vectors_equal(u_r_shape, u_shape) || !vectors_equal(v_r_shape, v_shape)) {
+                    err = where + ": residual shape metadata differs from primary: U_R_shape=" +
+                          shape_to_string(u_r_shape) + ", V_R_shape=" + shape_to_string(v_r_shape);
+                    return false;
+                }
+                if (!check_packed_tensor(weights, prefix + ".U_R_packed", u_shape[0], u_words, err) ||
+                    !check_packed_tensor(weights, prefix + ".V_R_packed", v_shape[0], v_words, err)) {
+                    return false;
+                }
+                if (!check_float_tensor(weights, prefix + ".u1_R", u_shape[0], err) ||
+                    !check_float_tensor(weights, prefix + ".u2_R", split, err) ||
+                    !check_float_tensor(weights, prefix + ".v1_R", split, err) ||
+                    !check_float_tensor(weights, prefix + ".v2_R", spec.in, err)) {
+                    return false;
+                }
+            }
+            ++validated;
+        }
+    }
+
+    std::cout << "[MODEL] LittleBit validation OK: " << validated << " linears, residual="
+              << (residual ? "yes" : "no") << std::endl;
+    return true;
+}
+
+bool validate_littlebit_checkpoint(
+    const std::string& model_dir, const ModelConfig& config,
+    const SafeTensorsFile& weights, LittleBitCheckpointMeta& meta, std::string& err
+) {
+    const bool has_littlebit = has_littlebit_packed_tensors(weights);
+    if (!has_littlebit) {
+        if (has_plain_qwen3_linears(weights)) {
+            err = "Plain Qwen3 checkpoint detected. This loader requires a converted single-file "
+                  "LittleBit checkpoint (I32 *_U_packed/*_V_packed tensors plus U_shape/V_shape metadata); "
+                  "plain or sharded Qwen3 weights are not supported and no converter is bundled.";
+        } else {
+            err = "No LittleBit *_U_packed/*_V_packed tensors found; not a LittleBit checkpoint.";
+        }
+        return false;
+    }
+
+    if (!validate_littlebit_config(model_dir, meta, err)) return false;
+    return validate_littlebit_tensors(weights, config, meta.residual, err);
+}
+
+} // namespace
 
 size_t Qwen3Model::get_current_rss_mb() {
 #if defined(__APPLE__)
@@ -105,8 +516,23 @@ bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t n
 
     // 3. Open SafeTensors with mmap
     std::string weights_path = model_dir + "/model.safetensors";
+    std::ifstream index_in(model_dir + "/model.safetensors.index.json");
+    if (index_in.is_open()) {
+        std::cerr << "[MODEL] Error: Plain/sharded Qwen3 checkpoint detected (model.safetensors.index.json). "
+                     "This loader requires a converted single-file LittleBit checkpoint; "
+                     "sharded weights are not supported and no converter is bundled." << std::endl;
+        return false;
+    }
     if (!weights_file.open(weights_path)) {
         std::cerr << "[MODEL] Error: Cannot open weights file " << weights_path << std::endl;
+        return false;
+    }
+
+    LittleBitCheckpointMeta lb_meta;
+    std::string validation_error;
+    if (!validate_littlebit_checkpoint(model_dir, config, weights_file, lb_meta, validation_error)) {
+        std::cerr << "[MODEL] Error: " << validation_error << std::endl;
+        weights_file.close();
         return false;
     }
 
@@ -192,14 +618,10 @@ const float* Qwen3Model::forward_token(int32_t token_id, size_t pos) {
 
     // 4. Compute Logits from LM Head
     if (lm_head_mmap) {
-        for (size_t v = 0; v < config.vocab_size; ++v) {
-            const uint16_t* head_row_bf16 = lm_head_mmap + v * config.hidden_size;
-            float dot = 0.0f;
-            for (size_t i = 0; i < config.hidden_size; ++i) {
-                dot += out_ptr[i] * bf16_to_fp32(head_row_bf16[i]);
-            }
-            logits_buf[v] = dot;
-        }
+        lm_head_logits(
+            lm_head_mmap, out_ptr, logits_buf.data(),
+            config.vocab_size, config.hidden_size
+        );
     } else {
         std::fill(logits_buf.begin(), logits_buf.end(), 0.0f);
     }
