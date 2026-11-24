@@ -1,5 +1,8 @@
 #include "littlebit/binary_packer.h"
 #include "littlebit/scalar_kernels.h"
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include "littlebit/binary_packer_neon_variants_internal.h"
+#endif
 #include <cstring>
 
 namespace littlebit {
@@ -47,7 +50,10 @@ void binary_matvec_mult(
 ) {
 #if defined(__aarch64__) && defined(__ARM_NEON)
     if (littlebit::neon_available()) {
-        littlebit::binary_matvec_mult_neon(packed_A, x, y, M, K);
+        // Default ARM64 engine path: 8 float32x4_t accumulators (NEON32) with
+        // the shared 32 -> 8 -> 4 -> scalar tail cascade. vtst4 and prefetch32
+        // remain benchmark/test-only variants.
+        littlebit::bench::neon_variant_32(packed_A, x, y, M, K);
         return;
     }
 #endif

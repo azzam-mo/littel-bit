@@ -395,6 +395,10 @@ int main() {
             {"NEON32", littlebit::bench::neon_variant_32},
             {"vtst4", littlebit::bench::neon_variant_vtst},
             {"prefetch32", littlebit::bench::neon_variant_prefetch},
+            // Public engine entry point: with NEON enabled this dispatches to
+            // NEON32, so the default production path is covered by the same
+            // raw-bit oracle and explicit both-NaN pair checks.
+            {"engine", littlebit::binary_matvec_mult},
         };
 
         const size_t ks[] = {
