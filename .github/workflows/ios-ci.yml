@@ -56,7 +56,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/generate_xcode_project.py
-          plutil -lint LittleBitLoader.xcodeproj/project.pbxproj
+          python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
+          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"
           python3 scripts/check_xcode_project.py
 
           # The generator writes project.pbxproj but no .xcscheme. Create a
@@ -433,7 +434,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/generate_xcode_project.py
-          plutil -lint LittleBitLoader.xcodeproj/project.pbxproj
+          python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
+          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"
           python3 scripts/check_xcode_project.py
           python3 - <<'PY'
           import pathlib
