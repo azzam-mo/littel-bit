@@ -1,5 +1,6 @@
 #include "littlebit/model.h"
 #include "littlebit/ops.h"
+#include "../src/lm_head_avx2.h"
 
 #include <algorithm>
 #include <chrono>
@@ -342,14 +343,10 @@ const float* instrumented_forward(
 
     a = Clock::now();
     if (m.lm_head_mmap) {
-        for (size_t v = 0; v < m.config.vocab_size; ++v) {
-            const uint16_t* row = m.lm_head_mmap + v * m.config.hidden_size;
-            float dot = 0.0f;
-            for (size_t i = 0; i < m.config.hidden_size; ++i) {
-                dot += s.attn_out[i] * bf16_to_fp32(row[i]);
-            }
-            s.logits[v] = dot;
-        }
+        littlebit::lm_head_logits(
+            m.lm_head_mmap, s.attn_out.data(), s.logits.data(),
+            m.config.vocab_size, m.config.hidden_size
+        );
     } else {
         std::fill(s.logits.begin(), s.logits.end(), 0.0f);
     }
@@ -470,14 +467,10 @@ int main(int argc, char** argv) {
     if (model.lm_head_mmap && lm_repeats > 0) {
         auto a = Clock::now();
         for (size_t r = 0; r < lm_repeats; ++r) {
-            for (size_t v = 0; v < model.config.vocab_size; ++v) {
-                const uint16_t* row = model.lm_head_mmap + v * model.config.hidden_size;
-                float dot = 0.0f;
-                for (size_t i = 0; i < model.config.hidden_size; ++i) {
-                    dot += state.attn_out[i] * littlebit::bf16_to_fp32(row[i]);
-                }
-                state.logits[v] = dot;
-            }
+            littlebit::lm_head_logits(
+                model.lm_head_mmap, state.attn_out.data(), state.logits.data(),
+                model.config.vocab_size, model.config.hidden_size
+            );
         }
         lm_iso_ms = elapsed_ms(a, Clock::now()) / static_cast<double>(lm_repeats);
     }

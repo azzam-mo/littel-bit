@@ -1,0 +1,21 @@
+Test project /tmp/opencode/lbit-p9-opt4-san
+    Start 1: test_binary_packer
+1/8 Test #1: test_binary_packer ...............   Passed    0.07 sec
+    Start 2: test_littlebit_linear
+2/8 Test #2: test_littlebit_linear ............   Passed    0.02 sec
+    Start 3: test_safetensors
+3/8 Test #3: test_safetensors .................   Passed    0.03 sec
+    Start 4: test_tokenizer
+4/8 Test #4: test_tokenizer ...................   Passed    2.42 sec
+    Start 5: test_ops
+5/8 Test #5: test_ops .........................   Passed    0.02 sec
+    Start 6: test_transformer_block
+6/8 Test #6: test_transformer_block ...........   Passed    0.03 sec
+    Start 7: check_xcode_project
+7/8 Test #7: check_xcode_project ..............   Passed    0.03 sec
+    Start 8: test_model_inference
+8/8 Test #8: test_model_inference .............   Passed    0.05 sec
+
+100% tests passed out of 8
+
+Total Test time (real) =   2.66 sec

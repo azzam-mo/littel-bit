@@ -20,6 +20,7 @@ include_directories(
 add_library(littlebit_engine STATIC
     src/binary_packer.cpp
     src/binary_packer_avx2.cpp
+    src/lm_head_avx2.cpp
     src/linear.cpp
     src/safetensors.cpp
     src/tokenizer.cpp

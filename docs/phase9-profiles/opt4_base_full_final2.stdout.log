@@ -1,0 +1,6 @@
+[MODEL] Loaded config: 36 layers, hidden=4096, vocab=151936
+[MODEL] Memory-mapped embedding table: 151936x4096
+[MODEL] Memory-mapped lm_head table: 151936x4096
+[MODEL] Successfully loaded in 0.997869s. Current RSS: 1137 MB
+[PROFILE] prompt_tokens=11 decode_tokens=3 ttft_ms=13052.3 decode_ms_per_token=1180.96 replay_logit_max_abs=0
+[PROFILE] json=/home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/docs/phase9-profiles/opt4_base_full_final2.json

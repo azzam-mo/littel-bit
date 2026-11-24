@@ -1,4 +1,5 @@
 #include "littlebit/model.h"
+#include "lm_head_avx2.h"
 #include "nlohmann/json.hpp"
 
 #include <fstream>
@@ -192,14 +193,10 @@ const float* Qwen3Model::forward_token(int32_t token_id, size_t pos) {
 
     // 4. Compute Logits from LM Head
     if (lm_head_mmap) {
-        for (size_t v = 0; v < config.vocab_size; ++v) {
-            const uint16_t* head_row_bf16 = lm_head_mmap + v * config.hidden_size;
-            float dot = 0.0f;
-            for (size_t i = 0; i < config.hidden_size; ++i) {
-                dot += out_ptr[i] * bf16_to_fp32(head_row_bf16[i]);
-            }
-            logits_buf[v] = dot;
-        }
+        lm_head_logits(
+            lm_head_mmap, out_ptr, logits_buf.data(),
+            config.vocab_size, config.hidden_size
+        );
     } else {
         std::fill(logits_buf.begin(), logits_buf.end(), 0.0f);
     }

@@ -1,0 +1,22 @@
+{
+  "commit": "9605266",
+  "vocab": 151936,
+  "hidden": 4096,
+  "bytes_per_call": 1244659712,
+  "repeats": 5,
+  "token": 262,
+  "pos": 0,
+  "special_bit_exact": true,
+  "replay_max_abs": 0,
+  "candidate_real_mismatches": 0,
+  "candidate_real_max_abs": 0,
+  "reference_median_ms": 509.394,
+  "reference_GB_per_s": 2.44341,
+  "memory_only_median_ms": 101.405,
+  "memory_only_GB_per_s": 12.2741,
+  "convert_only_median_ms": 131.866,
+  "convert_only_GB_per_s": 9.4388,
+  "multiply_only_median_ms": 218.352,
+  "multiply_only_GB_per_s": 5.70024,
+  "sink": 99465233145941
+}

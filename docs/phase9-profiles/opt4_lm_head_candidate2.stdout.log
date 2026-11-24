@@ -1,0 +1,11 @@
+[MODEL] Loaded config: 36 layers, hidden=4096, vocab=151936
+[MODEL] Memory-mapped embedding table: 151936x4096
+[MODEL] Memory-mapped lm_head table: 151936x4096
+[MODEL] Successfully loaded in 1.04996s. Current RSS: 1137 MB
+special_bit_exact=true replay_max_abs=0
+reference_median_ms=550.505 GB_per_s=2.26094
+memory_only_median_ms=84.7971 GB_per_s=14.6781
+convert_only_median_ms=110.243 GB_per_s=11.2901
+multiply_only_median_ms=151.135 GB_per_s=8.23541
+avx2_candidate_median_ms=364.221 GB_per_s=3.41732
+candidate_real_mismatches=0 max_abs=0
