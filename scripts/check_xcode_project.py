@@ -50,7 +50,7 @@ def main():
         "CODE_SIGN_STYLE = Automatic;",
         "SWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
         "CLANG_CXX_LANGUAGE_STANDARD = \"c++17\";",
-        "ARCHS[sdk=iphoneos*] = arm64;",
+        "\"ARCHS[sdk=iphoneos*]\" = arm64;",
         "-fno-fast-math",
         "-ffp-contract=off",
     ]

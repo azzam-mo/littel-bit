@@ -55,9 +55,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          dump_on_failure() {
+            python3 scripts/dump_pbxproj_context.py "$RUNNER_TEMP/xcodebuild-list.log" LittleBitLoader.xcodeproj/project.pbxproj
+          }
+          gate_xcodebuild_list() {
+            if ! xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"; then
+              dump_on_failure
+              return 1
+            fi
+          }
+
           python3 scripts/generate_xcode_project.py
           python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
-          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"
+
+          echo "### pbxproj diagnostics (informational; never fails the job)"
+          set +e
+          echo "### head -c 300 project.pbxproj | xxd"
+          head -c 300 LittleBitLoader.xcodeproj/project.pbxproj | xxd
+          echo "### file project.pbxproj"
+          file LittleBitLoader.xcodeproj/project.pbxproj
+          echo "### plutil -lint LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -lint LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -lint exit: $?"
+          echo "### plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -convert json exit: $?"
+          echo "### xcodebuild -list -project LittleBitLoader.xcodeproj (diagnostic, stderr included)"
+          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1
+          echo "xcodebuild -list diagnostic exit: $?"
+          set -euo pipefail
+
+          gate_xcodebuild_list
           python3 scripts/check_xcode_project.py
 
           # The generator writes project.pbxproj but no .xcscheme. Create a
@@ -132,7 +161,7 @@ jobs:
           print("Generated ephemeral scheme", scheme_path)
           PY
 
-          xcodebuild -list -project LittleBitLoader.xcodeproj | tee "$RUNNER_TEMP/xcodebuild-list.log"
+          gate_xcodebuild_list
 
       - name: Choose iPhone Simulator by name
         shell: bash
@@ -433,9 +462,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          dump_on_failure() {
+            python3 scripts/dump_pbxproj_context.py "$RUNNER_TEMP/xcodebuild-list.log" LittleBitLoader.xcodeproj/project.pbxproj
+          }
+          gate_xcodebuild_list() {
+            if ! xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"; then
+              dump_on_failure
+              return 1
+            fi
+          }
+
           python3 scripts/generate_xcode_project.py
           python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
-          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"
+
+          echo "### pbxproj diagnostics (informational; never fails the job)"
+          set +e
+          echo "### head -c 300 project.pbxproj | xxd"
+          head -c 300 LittleBitLoader.xcodeproj/project.pbxproj | xxd
+          echo "### file project.pbxproj"
+          file LittleBitLoader.xcodeproj/project.pbxproj
+          echo "### plutil -lint LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -lint LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -lint exit: $?"
+          echo "### plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -convert json exit: $?"
+          echo "### xcodebuild -list -project LittleBitLoader.xcodeproj (diagnostic, stderr included)"
+          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1
+          echo "xcodebuild -list diagnostic exit: $?"
+          set -euo pipefail
+
+          gate_xcodebuild_list
           python3 scripts/check_xcode_project.py
           python3 - <<'PY'
           import pathlib

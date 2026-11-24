@@ -246,7 +246,7 @@ def main():
         f"\t\t\tbuildSettings = {{\n"
         + "".join(f"\t\t\t\t{s}\n" for s in [
             *common_settings,
-            "ARCHS[sdk=iphoneos*] = arm64;",
+            "\"ARCHS[sdk=iphoneos*]\" = arm64;",
             "CODE_SIGN_STYLE = Automatic;",
             "ENABLE_TESTABILITY = YES;",
             f"INFOPLIST_FILE = {q(INFO_PLIST)};",
