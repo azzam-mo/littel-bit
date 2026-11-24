@@ -21,6 +21,10 @@ def to_bf16(value: float) -> bytes:
     return struct.pack("<H", bits >> 16)
 
 
+def i64_payload(*values: int) -> bytes:
+    return struct.pack("<%dq" % len(values), *values)
+
+
 def byte_to_unicode():
     bs = list(range(33, 127)) + list(range(161, 173)) + list(range(174, 256))
     cs = bs[:]
@@ -69,9 +73,32 @@ def main() -> int:
         "rms_norm_eps": 1e-6,
         "rope_theta": 10000.0,
         "max_position_embeddings": seq,
+        "eff_bit": 0.55,
+        "split_dim": split,
+        "residual": False,
+        "kv_factor": 1.0,
+        "min_split_dim": 8,
+        "quant_mod": "LittleBitLinear",
+        "quant_func": "SmoothSign",
+        "use_itq": False,
+        "itq_n_iter": 0,
     }
     with open(os.path.join(out_dir, "config.json"), "w", encoding="utf-8") as fh:
         json.dump(config, fh)
+
+    littlebit_config = {
+        "quant_func": "SmoothSign",
+        "eff_bit": 0.55,
+        "split_dim": split,
+        "residual": False,
+        "kv_factor": 1.0,
+        "min_split_dim": 8,
+        "quant_mod": "LittleBitLinear",
+        "use_itq": False,
+        "itq_n_iter": 0,
+    }
+    with open(os.path.join(out_dir, "littlebit_config.json"), "w", encoding="utf-8") as fh:
+        json.dump(littlebit_config, fh)
 
     # Single-character byte-level vocabulary, enough for a smoke test.
     vocab_map = {ch: idx for idx, ch in enumerate(byte_to_unicode().values())}
@@ -111,6 +138,9 @@ def main() -> int:
     for prefix, in_feat, out_feat in linears:
         u_words = (split + 31) // 32
         v_words = (in_feat + 31) // 32
+        add(prefix + ".U_shape", "I64", [2], i64_payload(out_feat, split))
+        add(prefix + ".V_shape", "I64", [2], i64_payload(split, in_feat))
+        add(prefix + "._split_dim_final", "I64", [], i64_payload(split))
         add(prefix + ".U_packed", "I32", [out_feat, u_words],
             struct.pack("<%di" % (out_feat * u_words), *([0x55555555] * (out_feat * u_words))))
         add(prefix + ".V_packed", "I32", [split, v_words],
