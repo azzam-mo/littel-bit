@@ -5,6 +5,7 @@ on:
     branches: [ "main", "dev", "phase11-neon-binary-matvec" ]
   pull_request:
     branches: [ "main", "dev", "phase11-neon-binary-matvec" ]
+  workflow_dispatch:
 
 jobs:
   arm64-neon:
