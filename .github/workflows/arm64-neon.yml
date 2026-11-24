@@ -1,0 +1,53 @@
+name: LittleBit ARM64 NEON CI
+
+on:
+  push:
+    branches: [ "main", "dev", "phase11-neon-binary-matvec" ]
+  pull_request:
+    branches: [ "main", "dev", "phase11-neon-binary-matvec" ]
+
+jobs:
+  arm64-neon:
+    name: ARM64 NEON (native)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++
+
+    - name: Configure CMake (Release)
+      run: cmake -S . -B build-arm64 -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build C++ engine and tests
+      run: cmake --build build-arm64 --config Release -j2
+
+    - name: Run tests with NEON enabled
+      run: ctest --test-dir build-arm64 --output-on-failure
+
+    - name: Run tests with NEON disabled (scalar fallback)
+      run: LITTLEBIT_DISABLE_NEON=1 ctest --test-dir build-arm64 --output-on-failure
+
+  x86-regression:
+    name: x86 Release regression
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++
+
+    - name: Configure CMake (Release)
+      run: cmake -S . -B build-x86 -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build C++ engine and tests
+      run: cmake --build build-x86 --config Release -j2
+
+    - name: Run tests
+      run: ctest --test-dir build-x86 --output-on-failure
