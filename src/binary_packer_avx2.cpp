@@ -1,4 +1,5 @@
 #include "littlebit/binary_packer.h"
+#include "littlebit/scalar_kernels.h"
 
 #include <immintrin.h>
 
@@ -8,34 +9,13 @@
 namespace littlebit {
 namespace {
 
-// Exact copy of the branchy scalar kernel at commit 87c2048. Used when AVX2 is
-// unavailable or explicitly disabled, so this file never calls back into the
-// default engine (which may later dispatch to the AVX2 kernel).
+// Uses the shared frozen scalar kernel when AVX2 is unavailable or explicitly
+// disabled, so this file never calls back into the default engine (which may
+// dispatch to AVX2 or NEON).
 void scalar_fallback(
     const int32_t* packed_A, const float* x, float* y, size_t M, size_t K
 ) {
-    size_t words_per_row = (K + 31) / 32;
-
-    for (size_t i = 0; i < M; ++i) {
-        float sum = 0.0f;
-        const int32_t* row_words = packed_A + i * words_per_row;
-
-        size_t k = 0;
-        for (size_t w = 0; w < words_per_row; ++w) {
-            uint32_t word = static_cast<uint32_t>(row_words[w]);
-            size_t bits_to_process = (K - k >= 32) ? 32 : (K - k);
-
-            for (size_t b = 0; b < bits_to_process; ++b) {
-                float val = x[k++];
-                if ((word & (1u << b)) == 0u) {
-                    sum += val; // bit 0 = +1
-                } else {
-                    sum -= val; // bit 1 = -1
-                }
-            }
-        }
-        y[i] = sum;
-    }
+    detail::scalar_binary_matvec(packed_A, x, y, M, K);
 }
 
 bool cpu_supports_avx2() {

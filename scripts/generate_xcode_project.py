@@ -25,12 +25,15 @@ APP_SWIFT = [
 ]
 BRIDGE_MM = ["ios/LittleBitLoader/Bridge/LittleBitEngineBridge.mm"]
 ENGINE_CPP = [
-    "src/binary_packer.cpp", "src/linear.cpp", "src/safetensors.cpp",
+    "src/binary_packer.cpp", "src/scalar_kernels.cpp",
+    "src/binary_packer_neon.cpp", "src/lm_head_scalar.cpp",
+    "src/linear.cpp", "src/safetensors.cpp",
     "src/tokenizer.cpp", "src/ops.cpp", "src/attention.cpp", "src/mlp.cpp",
     "src/transformer_block.cpp", "src/model.cpp",
 ]
 ENGINE_HEADERS = [
     "include/littlebit/binary_packer.h", "include/littlebit/common.h",
+    "include/littlebit/scalar_kernels.h",
     "include/littlebit/linear.h", "include/littlebit/safetensors.h",
     "include/littlebit/tokenizer.h", "include/littlebit/ops.h",
     "include/littlebit/attention.h", "include/littlebit/mlp.h",
@@ -228,7 +231,7 @@ def main():
         "GCC_PRECOMPILE_PREFIX_HEADER = NO;",
         "HEADER_SEARCH_PATHS = ( \"$(inherited)\", \"$(SRCROOT)/include\", \"$(SRCROOT)\", \"$(SRCROOT)/ios/LittleBitLoader/Bridge\" );",
         "IPHONEOS_DEPLOYMENT_TARGET = 16.0;",
-        "OTHER_CPLUSPLUSFLAGS = ( \"$(inherited)\", \"-O3\" );",
+        "OTHER_CPLUSPLUSFLAGS = ( \"$(inherited)\", \"-O3\", \"-fno-fast-math\", \"-ffp-contract=off\" );",
         "SDKROOT = iphoneos;",
         "SWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
         "SWIFT_VERSION = 5.0;",

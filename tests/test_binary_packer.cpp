@@ -368,6 +368,54 @@ int main() {
                   << std::endl;
     }
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    // Test 7: separate ARM64 NEON kernel, bit-exact against the frozen oracle.
+    // This covers 4-row lane groups, scalar tails, dirty padding bits, NaN
+    // payloads, infinities, signed zero, subnormals and non-multiple-of-32 K.
+    {
+        const size_t ks[] = {
+            1, 2, 7, 31, 32, 33, 63, 64, 65, 96, 97,
+            127, 128, 129, 255, 256, 257, 544, 545
+        };
+        const size_t ms[] = {1, 2, 3, 4, 5, 7, 8, 9, 16, 17, 33};
+        size_t checked = 0;
+        for (size_t K : ks) {
+            for (size_t M : ms) {
+                for (int pattern = 0; pattern < 4; ++pattern) {
+                    for (bool dirty : {false, true}) {
+                        if (!candidate_matches_reference(M, K, pattern, dirty,
+                                                         littlebit::binary_matvec_mult_neon)) {
+                            std::cerr << "NEON MISMATCH M=" << M << " K=" << K
+                                      << " pattern=" << pattern << " dirty=" << dirty << '\n';
+                            std::abort();
+                        }
+                        ++checked;
+                    }
+                }
+            }
+        }
+
+        // LITTLEBIT_DISABLE_NEON must route the kernel through the same scalar
+        // oracle, including the final-tail path.
+        setenv("LITTLEBIT_DISABLE_NEON", "1", 1);
+        assert(!littlebit::neon_available());
+        for (size_t K : {size_t(7), size_t(64), size_t(129), size_t(545)}) {
+            for (size_t M : {size_t(1), size_t(4), size_t(9)}) {
+                if (!candidate_matches_reference(M, K, 3, true,
+                                                 littlebit::binary_matvec_mult_neon)) {
+                    std::cerr << "NEON disabled-path MISMATCH M=" << M << " K=" << K << '\n';
+                    std::abort();
+                }
+            }
+        }
+        unsetenv("LITTLEBIT_DISABLE_NEON");
+        assert(littlebit::neon_available());
+        std::cout << "  ✓ Test 7: ARM64 NEON kernel (" << checked
+                  << " shape/pattern cases) bit-exact incl. tails and NaN payloads."
+                  << std::endl;
+    }
+#endif
+
     std::cout << "All binary_packer unit tests passed successfully!" << std::endl;
     return 0;
 }

@@ -48,6 +48,17 @@ void binary_matvec_mult_avx2(
 // True only when AVX2 is supported by the CPU and not disabled at runtime.
 bool avx2_available();
 
+// ARM64 NEON kernel for binary matvec. Declared on all platforms so test code
+// can be shared; always falls back to the frozen scalar kernel when unavailable.
+bool neon_available();
+void binary_matvec_mult_neon(
+    const int32_t* packed_A,
+    const float* x,
+    float* y,
+    size_t M,
+    size_t K
+);
+
 // High-performance Transposed Binary Matrix-Vector Multiplication:
 // Computes y = A^T * x, where:
 // - A is (M x K) packed matrix

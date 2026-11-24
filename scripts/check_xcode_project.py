@@ -44,6 +44,8 @@ def main():
         "SWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
         "CLANG_CXX_LANGUAGE_STANDARD = c++17;",
         "ARCHS[sdk=iphoneos*] = arm64;",
+        "-fno-fast-math",
+        "-ffp-contract=off",
     ]
     for setting in required_settings:
         if setting not in text:
@@ -61,7 +63,11 @@ def main():
     if "arm64" not in plist_text:
         failures.append("Info.plist does not require arm64")
 
-    app_sources = ["LittleBitEngineBridge.mm", "model.cpp", "LittleBitEngine.swift"]
+    app_sources = [
+        "LittleBitEngineBridge.mm", "model.cpp", "LittleBitEngine.swift",
+        "binary_packer.cpp", "binary_packer_neon.cpp", "scalar_kernels.cpp",
+        "lm_head_scalar.cpp",
+    ]
     for name in app_sources:
         if not any(p.endswith(name) for p in paths):
             failures.append(f"app target missing source {name}")
