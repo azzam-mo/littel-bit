@@ -1,0 +1,8 @@
+[TEST] Running binary_packer unit tests...
+  ✓ Test 1: 8-element row packing & unpacking passed.
+  ✓ Test 2: (5 x 50) matrix pack & unpack roundtrip passed.
+  ✓ Test 3: Direct binary_matvec_mult matches ground truth.
+  ✓ Test 4: Transposed binary_matvec_mult_transposed matches ground truth.
+  ✓ Test 5: binary_matvec_mult edge cases are bit-exact vs reference.
+  ✓ Test 6: AVX2 kernel (1360 shape/pattern cases) bit-exact incl. NaN payloads and padding.
+All binary_packer unit tests passed successfully!

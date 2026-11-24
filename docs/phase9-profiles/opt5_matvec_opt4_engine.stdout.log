@@ -1,0 +1,13 @@
+[MATVEC] wrote docs/phase9-profiles/opt5_matvec_opt4_engine.json
+  model.layers.0.self_attn.q_proj.V M=544 K=4096 engine=0.361335ms ref=20.6029ms xor=12.0834ms mul=16.1567ms avx2=1.48386ms exact=yes avx2_exact=yes
+  model.layers.0.self_attn.q_proj.U M=4096 K=544 engine=5.23283ms ref=40.4257ms xor=2.42001ms mul=17.7148ms avx2=5.13497ms exact=yes avx2_exact=yes
+  model.layers.0.self_attn.q_proj.V_R M=544 K=4096 engine=0.383791ms ref=14.4895ms xor=2.51643ms mul=2.36972ms avx2=0.428822ms exact=yes avx2_exact=yes
+  model.layers.0.self_attn.q_proj.U_R M=4096 K=544 engine=0.346369ms ref=8.83737ms xor=2.07456ms mul=2.23344ms avx2=0.382517ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.gate_proj.V M=824 K=4096 engine=1.78251ms ref=78.5459ms xor=14.2546ms mul=26.4095ms avx2=5.51663ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.gate_proj.U M=12288 K=824 engine=1.7891ms ref=108.793ms xor=35.6637ms mul=91.6059ms avx2=10.6732ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.gate_proj.V_R M=824 K=4096 engine=5.97959ms ref=109.347ms xor=25.8957ms mul=15.4443ms avx2=4.44927ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.gate_proj.U_R M=12288 K=824 engine=1.80014ms ref=62.5652ms xor=13.094ms mul=24.0464ms avx2=2.36579ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.down_proj.V M=824 K=12288 engine=1.9393ms ref=37.5033ms xor=11.4263ms mul=14.0006ms avx2=2.01304ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.down_proj.U M=4096 K=824 engine=0.695807ms ref=14.0358ms xor=3.40553ms mul=5.63315ms avx2=0.57509ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.down_proj.V_R M=824 K=12288 engine=1.71991ms ref=35.3694ms xor=9.13291ms mul=15.9411ms avx2=1.76992ms exact=yes avx2_exact=yes
+  model.layers.0.mlp.down_proj.U_R M=4096 K=824 engine=0.582516ms ref=13.3236ms xor=3.02917ms mul=4.33595ms avx2=1.13379ms exact=yes avx2_exact=yes

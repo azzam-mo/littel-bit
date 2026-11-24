@@ -1,0 +1,12 @@
+  reference: completed token 1/3
+  reference: completed token 2/3
+  reference: completed token 3/3
+[logits] layers=36 tokens=3 max_abs=7.72476e-05 max_rel=3.79305e-06 mean_rel=4.25337e-07
+[top1] got=15 ref=15 MATCH
+[top5] overlap=5/5
+[probe] [MODEL] Loaded config: 36 layers, hidden=4096, vocab=151936
+[MODEL] Memory-mapped embedding table: 151936x4096
+[MODEL] Memory-mapped lm_head table: 151936x4096
+[MODEL] Successfully loaded in 2.00518s. Current RSS: 1011 MB
+tokens=3 vocab=151936 layers=36
+RESULT: PASS
