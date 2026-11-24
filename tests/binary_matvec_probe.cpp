@@ -144,27 +144,45 @@ PathResult measure(
     }
 
     std::vector<float> x = make_x(K);
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
     std::vector<float> y_ref(M, 0.0f), y_opt(M, 0.0f), y_xor(M, 0.0f), y_mul(M, 0.0f), y_avx2(M, 0.0f);
+#else
+    std::vector<float> y_ref(M, 0.0f), y_opt(M, 0.0f), y_xor(M, 0.0f), y_mul(M, 0.0f);
+#endif
     reference_binary_matvec_mult(packed.data(), x.data(), y_ref.data(), M, K);
     littlebit::binary_matvec_mult(packed.data(), x.data(), y_opt.data(), M, K);
     candidate_xor_sign(packed.data(), x.data(), y_xor.data(), M, K);
     candidate_mul_sign(packed.data(), x.data(), y_mul.data(), M, K);
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
     littlebit::binary_matvec_mult_avx2(packed.data(), x.data(), y_avx2.data(), M, K);
+#endif
     r.bit_exact = true;
     r.xor_exact = true;
     r.mul_exact = true;
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
     r.avx2_exact = true;
+#endif
     for (size_t i = 0; i < M; ++i) {
         if (!same_float_bits(y_ref[i], y_opt[i])) r.bit_exact = false;
         if (!same_float_bits(y_ref[i], y_xor[i])) r.xor_exact = false;
         if (!same_float_bits(y_ref[i], y_mul[i])) r.mul_exact = false;
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
         if (!same_float_bits(y_ref[i], y_avx2[i])) r.avx2_exact = false;
+#endif
     }
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
     if (!r.bit_exact || !r.xor_exact || !r.mul_exact || !r.avx2_exact) {
         std::cerr << "BIT MISMATCH in " << name
                   << " engine=" << r.bit_exact << " xor=" << r.xor_exact
                   << " mul=" << r.mul_exact << " avx2=" << r.avx2_exact << '\n';
     }
+#else
+    if (!r.bit_exact || !r.xor_exact || !r.mul_exact) {
+        std::cerr << "BIT MISMATCH in " << name
+                  << " engine=" << r.bit_exact << " xor=" << r.xor_exact
+                  << " mul=" << r.mul_exact << '\n';
+    }
+#endif
 
     // Warm all implementations, then time them identically.
     for (int i = 0; i < 2; ++i) {
@@ -172,7 +190,9 @@ PathResult measure(
         littlebit::binary_matvec_mult(packed.data(), x.data(), y_opt.data(), M, K);
         candidate_xor_sign(packed.data(), x.data(), y_xor.data(), M, K);
         candidate_mul_sign(packed.data(), x.data(), y_mul.data(), M, K);
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
         littlebit::binary_matvec_mult_avx2(packed.data(), x.data(), y_avx2.data(), M, K);
+#endif
     }
     volatile float sink = 0.0f;
 
@@ -208,6 +228,7 @@ PathResult measure(
     b = Clock::now();
     r.mul_ms = std::chrono::duration<double, std::milli>(b - a).count() / repeats;
 
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
     a = Clock::now();
     for (size_t rep = 0; rep < repeats; ++rep) {
         littlebit::binary_matvec_mult_avx2(packed.data(), x.data(), y_avx2.data(), M, K);
@@ -215,6 +236,7 @@ PathResult measure(
     }
     b = Clock::now();
     r.avx2_ms = std::chrono::duration<double, std::milli>(b - a).count() / repeats;
+#endif
     (void)sink;
     return r;
 }

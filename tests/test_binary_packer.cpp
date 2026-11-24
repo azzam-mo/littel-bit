@@ -330,7 +330,9 @@ int main() {
         std::cout << "  ✓ Test 5: binary_matvec_mult edge cases are bit-exact vs reference." << std::endl;
     }
 
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
     // Test 6: separate AVX2 kernel, bit-exact against the frozen scalar oracle.
+    // AVX2 sources are not compiled on ARM64, so this whole section is x86-only.
     {
         const size_t ks[] = {1, 2, 7, 31, 32, 33, 63, 64, 65, 96, 97, 127, 128, 129, 255, 256, 257};
         const size_t ms[] = {1, 3, 7, 8, 9, 16, 17, 24, 32, 33};
@@ -367,6 +369,7 @@ int main() {
                   << " shape/pattern cases) bit-exact incl. NaN payloads and padding."
                   << std::endl;
     }
+#endif // defined(__x86_64__) || defined(__i386__) || defined(_M_X64)
 
 #if defined(__aarch64__) && defined(__ARM_NEON)
     // Test 7: separate ARM64 NEON kernel, bit-exact against the frozen oracle.
