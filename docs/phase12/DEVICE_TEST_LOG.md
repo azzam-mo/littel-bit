@@ -110,6 +110,17 @@ These are Xcode/iOS tests added during the second review pass. They are **not** 
 | P12-R06 | `testEngineUnloadCompletionRunsAfterBridgeTeardown` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
 | P12-R07 | ARM64 Test 7c NEON4 `M=4 K=7 pattern=2 dirty=0` lane trace + tail boundaries | CODE ADDED — NOT EXECUTED (host is x86_64; no ARM64 runner locally) |
 
-Linux regression for the same mmap-lifetime class (`test_model_inference.cpp`: bad `lm_head` shape, failed reload, optional head tensor) **is executed** and passes as part of CTest 8/8. Linux binary-packer exactness is also executed and passes, but the ARM64-only NEON section is compiled out on this host. A clean Linux Release rebuild with `-Wall -Wextra` reports 0 warnings; workflow YAML (4/4) and all `run:` blocks (41/41) pass static checks. Swift warning fixes are source-only here because no `swiftc`/Xcode is available.
+Linux regression for the same mmap-lifetime class (`test_model_inference.cpp`: bad `lm_head` shape, failed reload, optional head tensor) **is executed** and passes as part of CTest 8/8. Linux binary-packer exactness is also executed and passes, but the ARM64-only NEON section is compiled out on this host. A clean Linux Release rebuild with `-Wall -Wextra` reports 0 warnings; workflow YAML (4/4) and all `run:` blocks (42/42) pass static checks. Swift warning fixes are source-only here because no `swiftc`/Xcode is available.
 
 AltStore packaging script, privileged packaging script, and source JSON example are **static-check only** here: `bash -n` and JSON parse pass on Linux, but `codesign`, `plutil`, `lipo`, IPA packaging, authorized provisioning, AltServer re-signing, and device install are all `NOT EXECUTED` without macOS, an authorized identity/profile, and an iPhone. The AltStore path intentionally has an empty entitlement blob; the privileged path is `BLOCKED` by default.
+
+## Cross-platform validation classification
+
+| Category | Meaning | Status |
+|---|---|---|
+| Native ARM64 hardware execution | `ubuntu-24.04-arm` Linux runner, native `aarch64`, Test 7 = 15,960 cases and Test 7c = 308 cases | WORKFLOW PREPARED — NOT EXECUTED |
+| macOS simulator execution | `macos-15` + `iphonesimulator` + arm64 XCTest; full unsigned Release device build is a separate compile check | WORKFLOW PREPARED — NOT EXECUTED |
+| Signed IPA validation | Ad-hoc carrier signature and entitlement blob read back from the extracted final AltStore source IPA; not Apple signing and not installability proof | WORKFLOW PREPARED — NOT EXECUTED |
+| Physical iPhone validation | Installed-app entitlements/profile, Jetsam/memory, Files security scope, T01–T11 | BLOCKED |
+
+No actual GitHub Actions run URL exists for `9451eb9`: the local commit is not on `origin` (remote branch is `161b78f`), and `gh` is not authenticated. See `docs/phase12/CROSS_PLATFORM_VERIFICATION.md` for the full blocker matrix.

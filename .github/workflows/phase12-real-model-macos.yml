@@ -480,28 +480,32 @@ jobs:
             exit 1
           fi
 
+          codesign --verify --strict --verbose=2 "$extracted_app" \
+            2>&1 | tee "$RUNNER_TEMP/altstore-codesign-verify.log"
           codesign -d --entitlements :- "$extracted_app" > "$IPA_ENTITLEMENTS" \
             2>"$RUNNER_TEMP/altstore-entitlements-codesign.log"
           plutil -lint "$IPA_ENTITLEMENTS"
           plutil -p "$IPA_ENTITLEMENTS" | tee "$RUNNER_TEMP/altstore-entitlements-readable.txt"
 
-          iml="$(plutil -extract com.apple.developer.kernel.increased-memory-limit raw -o - "$IPA_ENTITLEMENTS" 2>/dev/null || true)"
-          if [ "$iml" != "true" ]; then
-            echo "entitlement readback did not contain increased-memory-limit=true: '$iml'" >&2
-            exit 1
-          fi
-          echo "IPA_ENTITLEMENT_READBACK=com.apple.developer.kernel.increased-memory-limit=true"
+          # The entitlement key contains dots, so parse the plist as JSON rather
+          # than using plutil's dotted keypath syntax.
+          plutil -convert json -o - "$IPA_ENTITLEMENTS" \
+            | python3 -c 'import json, sys; key = "com.apple.developer.kernel.increased-memory-limit"; data = json.load(sys.stdin); raise SystemExit(1 if key in data else 0)' \
+            || { echo "packaged IPA must not request com.apple.developer.kernel.increased-memory-limit" >&2; exit 1; }
+          echo "IPA_ENTITLEMENT_READBACK=restricted-entitlement-absent" >> "$GITHUB_ENV"
+          echo "IPA_ENTITLEMENT_READBACK=restricted-entitlement-absent"
 
           {
             echo "## AltStore-source IPA"
             echo "- Artifact: \`phase12-altstore-source-ipa\`"
             echo "- SHA-256: \`$ipa_sha\`"
-            echo "- Entitlement blob read back from the IPA (ad-hoc carrier signature):"
+            echo "- Entitlement blob read back from the packaged app (ad-hoc carrier signature; integrity verified only):"
             echo '```xml'
             cat "$IPA_ENTITLEMENTS"
             echo '```'
+            echo "- Restricted entitlement \`com.apple.developer.kernel.increased-memory-limit\`: ABSENT from the packaged IPA entitlement blob (exact JSON key check)."
             echo "- This IPA is NOT installable as-is. AltStore/AltServer must re-sign it with a free Apple ID on the user's Mac. No Apple ID, password, certificate, or private key is in this repository or workflow."
-            echo "- Structural entitlement presence is not provisioning-profile proof; installed-app/real-device verification remains BLOCKED."
+            echo "- This verifies the source IPA only; installed-app entitlements after AltStore re-sign and physical-device validation remain BLOCKED."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload AltStore-source IPA and logs
@@ -514,6 +518,7 @@ jobs:
             ${{ runner.temp }}/altstore-entitlements.plist
             ${{ runner.temp }}/altstore-entitlements-readable.txt
             ${{ runner.temp }}/altstore-entitlements-codesign.log
+            ${{ runner.temp }}/altstore-codesign-verify.log
             ${{ runner.temp }}/altstore-ipa-package.log
             ${{ runner.temp }}/ios-archive.log
           if-no-files-found: warn

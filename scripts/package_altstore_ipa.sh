@@ -23,7 +23,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "ERROR: package_altstore_ipa.sh requires macOS (xcodebuild/codesign/plutil/lipo)." >&2
   exit 1
 fi
-for tool in codesign plutil lipo python3 shasum; do
+for tool in codesign plutil lipo ditto python3 shasum; do
   command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: missing required tool: $tool" >&2; exit 1; }
 done
 [ -d "$APP" ] || { echo "ERROR: app bundle not found: $APP" >&2; exit 1; }
@@ -75,7 +75,7 @@ esac
 # plutil keypath (which would treat each dot as a nested dictionary separator).
 privileged_entitlement_present() {
   plutil -convert json -o - "$1" 2>/dev/null |
-    python3 -c 'import json, sys; data = json.load(sys.stdin); raise SystemExit(0 if data.get("com.apple.developer.kernel.increased-memory-limit") is not None else 1)'
+    python3 -c 'import json, sys; data = json.load(sys.stdin); raise SystemExit(0 if "com.apple.developer.kernel.increased-memory-limit" in data else 1)'
 }
 plutil -lint "$ENTITLEMENTS" >/dev/null \
   || fail "AltStore entitlements file is not a valid plist"
@@ -93,15 +93,38 @@ codesign -d --entitlements :- "$STAGED_APP" > "$WORK/app-entitlements.plist" 2>"
 plutil -lint "$WORK/app-entitlements.plist" >/dev/null \
   || fail "entitlement blob readback is not a valid plist"
 if privileged_entitlement_present "$WORK/app-entitlements.plist"; then
-  fail "AltStore IPA contains privileged entitlement: com.apple.developer.kernel.increased-memory-limit"
+  fail "staged app contains privileged entitlement: com.apple.developer.kernel.increased-memory-limit"
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
-python3 "$ROOT/scripts/package_ipa.py" "$STAGED_APP" "$OUTPUT"
+python3 "$ROOT/scripts/package_ipa.py" "$STAGED_APP" "$OUTPUT" > "$WORK/package.log" 2>&1 || {
+  cat "$WORK/package.log" >&2
+  fail "could not package IPA"
+}
+
+# Verify the archived artifact, not only the staged app used to build it.
+IPA_EXTRACT="$WORK/ipa-extract"
+mkdir -p "$IPA_EXTRACT"
+ditto -x -k "$OUTPUT" "$IPA_EXTRACT" || fail "could not extract packaged IPA for verification"
+IPA_APP="$IPA_EXTRACT/Payload/LittleBitLoader.app"
+[ -d "$IPA_APP" ] || fail "packaged IPA is missing Payload/LittleBitLoader.app"
+codesign --verify --strict --verbose=2 "$IPA_APP" > "$WORK/ipa-codesign-verify.log" 2>&1 || {
+  cat "$WORK/ipa-codesign-verify.log" >&2
+  fail "packaged IPA ad-hoc signature did not verify"
+}
+codesign -d --entitlements :- "$IPA_APP" > "$WORK/ipa-entitlements.plist" 2>"$WORK/ipa-codesign-display.log" \
+  || fail "could not read entitlements from packaged IPA"
+plutil -lint "$WORK/ipa-entitlements.plist" >/dev/null \
+  || fail "packaged IPA entitlement blob is not a valid plist"
+if privileged_entitlement_present "$WORK/ipa-entitlements.plist"; then
+  fail "packaged IPA contains privileged entitlement: com.apple.developer.kernel.increased-memory-limit"
+fi
+ipa_archs="$(lipo -archs "$IPA_APP/$executable")"
+[ "$ipa_archs" = "$archs" ] || fail "packaged IPA architectures changed: $ipa_archs (expected $archs)"
 
 echo "AltStore-compatible source IPA: $OUTPUT"
 echo "SHA-256: $(shasum -a 256 "$OUTPUT" | awk '{print $1}')"
 echo "Architectures: $archs"
 echo "Verified from built app: CFBundleIdentifier=$bundle_id, MinimumOSVersion=$minimum_os"
-echo "Verified entitlement blob: no privileged entitlements"
-echo "NOTE: ad-hoc signature is NOT installable by iOS. AltStore/AltServer must re-sign with a free Apple ID."
+echo "Verified packaged IPA entitlement blob: no privileged entitlements"
+echo "NOTE: ad-hoc signature is integrity-checked only; it is NOT installable by iOS. AltStore/AltServer must re-sign with a free Apple ID."

@@ -19,6 +19,7 @@
 | جاهزية المشروع هيكليًا للتوقيع/Build | PASS جزئيًا — المشروع سليم، الـ entitlement موجود وموصول، لكن Team ID/profile غير متاحين محليًا |
 | macOS CI بعد Phase 11 | PASS حسب تقرير المستخدم: build rc=0، XCTest 8/8، NEON مثبت |
 | macOS CI بعد تعديلات Phase 12 | UNVERIFIED — لا توجد نتيجة فعلية؛ الـ triggers أُصلحت وستُشغّل بعد push |
+| Cross-platform CI لـ `9451eb9` | WORKFLOWS PREPARED / RUNS BLOCKED — الـ commit المحلي ليس على `origin` (`161b78f`) ولا يوجد `gh auth`؛ لا توجد run URLs |
 | AltStore-compatible source IPA | PREPARED (code/docs only) — يستخدم `LittleBitLoader.AltStore.entitlements` فارغًا، ويستبعد الـ entitlement الممتاز صراحةً؛ لم يُشغّل على macOS ولم يُثبّت |
 | IPA قابل للتثبيت من GitHub Actions | BLOCKED — الـ artifact ليس قابلاً للتثبيت؛ AltStore/AltServer يعيد التوقيع بحساب المستخدم |
 | NEON4 `M=4 K=7 pattern=2 dirty=0` | FIX PREPARED — توحيد ordered FP بين oracle/scalar tails/NEON؛ التنفيذ على ARM64 BLOCKED محليًا |
@@ -118,28 +119,27 @@ system_profiler: NOT FOUND
 `.github/workflows/ios-ci.yml` تحتوي وظيفتين:
 
 1. `ios-simulator-tests`
-   - تبني وتختبر على iOS Simulator.
-   - تنتج summary وتحقق من NEON.
-   - لا توقع تطبيقًا.
+   - تبني التطبيق كاملاً لجهاز iOS (Release، بدون توقيع Apple) عبر `xcodebuild build -destination 'generic/platform=iOS'`.
+   - ثم تبني وتختبر على iOS Simulator arm64 (Debug) عبر `build-for-testing` + `test-without-building`.
+   - تنتج summary وتحقق من NEON وعدّ الاختبارات؛ لا توقع تطبيقًا.
 
-2. `altstore-ipa-optional` (اسم العرض: `Optional AltStore-compatible source IPA`)
-   - تعمل فقط عبر `workflow_dispatch`.
+2. `altstore-ipa` (كانت `altstore-ipa-optional` وتعمل فقط عبر `workflow_dispatch`)
+   - أصبحت تعمل على push/PR/workflow_dispatch لفرع `phase12-**`.
    - تستخدم `CODE_SIGNING_ALLOWED=NO`, `CODE_SIGNING_REQUIRED=NO`, `CODE_SIGN_IDENTITY=""`.
-   - تستدعي `scripts/package_altstore_ipa.sh` بدل ضغط الـ `.app` مباشرة.
-   - Script يضيف **توقيع ad-hoc** باستخدام `ios/LittleBitLoader/LittleBitLoader.AltStore.entitlements` (فارغ)، ثم يتحقق من:
+   - تستدعي `scripts/package_altstore_ipa.sh`، الذي يضيف **توقيع ad-hoc** باستخدام `ios/LittleBitLoader/LittleBitLoader.AltStore.entitlements` (فارغ)، ثم يتحقق من:
      - `CFBundleIdentifier == com.littlebit.loader`،
      - `MinimumOSVersion == 16.0`،
      - `UIFileSharingEnabled == true` و`LSSupportsOpeningDocumentsInPlace == true`،
      - وجود شريحة `arm64` وعدم وجود `x86_64`،
-     - **غياب** `com.apple.developer.kernel.increased-memory-limit` من ملف الـ entitlements ومن الـ blob المقروء،
-     - SHA-256 للـ IPA الناتج.
-   - الاسم الجديد للـ artifact: `ios-altstore-compatible-source-ipa-optional` / `LittleBitLoader-altstore-compatible-source.ipa`.
-   - خطوة منفصلة تعلن أن مسار الـ entitlement الممتاز `BLOCKED` هنا ولا ينتج IPA.
+     - **غياب** `com.apple.developer.kernel.increased-memory-limit` من ملف الـ entitlements، من blob التطبيق المُعدّ، ومن blob التطبيق المستخرج من الـ IPA النهائي،
+     - سلامة التوقيع ad-hoc وSHA-256 للـ IPA الناتج.
+   - الاسم المحفوظ للـ artifact: `ios-altstore-compatible-source-ipa-optional` / `LittleBitLoader-altstore-compatible-source.ipa`.
+   - خطوة منفصلة تستدعي `scripts/package_privileged_ipa.sh` وتتأكد أنه يفشل عمدًا برمز `2` ورسالة `BLOCKED`؛ لا ينتج IPA ممتازًا.
 
 ### 5.2 الحكم
 
 - هذا الـ artifact **ليس قابلاً للتثبيت على iPhone** كما هو.
-- الـ archive يُنتج بـ `CODE_SIGNING_ALLOWED=NO`؛ لذلك لا يحتوي blob توقيع صالحًا بالـ entitlements. التوقيع ad-hoc اللاحق هنا يضيف blob فارغًا صالحًا للفحص فقط، وليس توقيع Apple ولا صلاحية حقيقية.
+- الـ archive يُنتج بـ `CODE_SIGNING_ALLOWED=NO`؛ لذلك لا يحتوي blob توقيع صالحًا بالـ entitlements. التوقيع ad-hoc اللاحق هنا يضيف blob فارغًا صالحًا للفحص فقط؛ تتم قراءته الآن من التطبيق المستخرج من الـ IPA النهائي، وهو ليس توقيع Apple ولا صلاحية حقيقية.
 - لا يدّعي هذا المسار وجود `com.apple.developer.kernel.increased-memory-limit`. الملف الممتاز الأصلي محفوظ لمسار منفصل يتطلب profile/identity مصرّحًا بهما.
 - AltStore Classic يعيد توقيع الـ IPA ب_free Apple ID_ عبر AltStore/AltServer؛ هذا هو المسار المعدّ في القسم 22.
 - لا توجد شهادات أو كلمات سر أو مفاتيح خاصة في المستودع أو في الـ workflow.
@@ -462,7 +462,7 @@ docs/phase12/DEVICE_TEST_LOG.md
 | Validator fixtures | 2/2 OK |
 | Xcode path fixtures | 4/4 OK |
 | YAML `safe_load` | OK |
-| كل `run:` blocks | 41/41 `bash -n` OK (بعد إضافة triggers لكل الـ workflows) |
+| كل `run:` blocks | 42/42 `bash -n` OK (بعد إضافة triggers لكل الـ workflows) |
 | x86 Release build | OK |
 | x86 CTest | 8/8 |
 | Linux CI-equivalent IPA mock (`package_ipa.sh` + `unzip -l`) | OK |
@@ -573,16 +573,23 @@ docs/phase12/DEVICE_TEST_LOG.md
 
 ## 19. حالة CI الفعلية
 
-- `gh auth status`: **not logged in**.
-- `GET https://api.github.com/repos/azzam-mo/littel-bit`: **404** (غير متاح عبر هذه البيئة).
-- لذلك: **لا توجد نتيجة GitHub Actions فعلية لهذا الفرع**. لا يُدعى نجاح CI.
+- `git rev-parse HEAD`: `9451eb9ef5e2dba728833a537ce5840a40e7e847`.
+- `git ls-remote --heads origin refs/heads/phase12-ios-device-validation`: `161b78fd5bd6b449a7736e6e18e011731e964693`.
+  - أي أن أحدث commit محلي **لم يُدفع**؛ لا يمكن أن توجد run مرتبطة بـ `9451eb9`.
+- `gh auth status`: **not logged in**؛ لا يوجد `GITHUB_TOKEN`/`GH_TOKEN` في البيئة.
+- `GET https://api.github.com/repos/azzam-mo/littel-bit` وصفحة Actions: **404** عند الوصول المجهول، رغم أن `git ls-remote` عبر SSH يعمل.
+- لذلك: **لا توجد run URLs فعلية ولا نتيجة GitHub Actions لهذا الفرع/الcommit**. لا يُدعى نجاح CI. عناوين تعريف الـ workflows أدناه هي عناوين ملفات فقط وليست أدلة تشغيل:
+  - `https://github.com/azzam-mo/littel-bit/actions/workflows/arm64-neon.yml`
+  - `https://github.com/azzam-mo/littel-bit/actions/workflows/ios-ci.yml`
+  - `https://github.com/azzam-mo/littel-bit/actions/workflows/phase12-real-model-macos.yml`
+- التفاصيل الكاملة ومصفوفة المنصات في `docs/phase12/CROSS_PLATFORM_VERIFICATION.md`.
 
 ما تم إثباته محلياً فقط:
 
 | الفحص | النتيجة |
 |---|---|
 | YAML `safe_load` لكل workflows | OK |
-| `bash -n` لكل `run:` blocks | 41/41 OK |
+| `bash -n` لكل `run:` blocks | 42/42 OK |
 | pbxproj validator | OK |
 | `check_xcode_project.py` | PASS |
 | validator fixtures | 2/2 |
@@ -590,7 +597,7 @@ docs/phase12/DEVICE_TEST_LOG.md
 | x86 Release build | OK |
 | x86 CTest | 8/8 |
 | Linux CI-equivalent IPA mock | OK |
-| `bash -n scripts/package_altstore_ipa.sh` | OK (لم يُنفَّذ؛ macOS only) |
+| `bash -n scripts/package_altstore_ipa.sh` و`scripts/package_privileged_ipa.sh` | 2/2 OK (لم يُنفَّذا؛ macOS only) |
 | AltStore source JSON parse | OK |
 | Workflow trigger audit | `phase12-**` موجود في push وPR لكل الـ workflows |
 | `git diff --check` | clean |
@@ -678,3 +685,21 @@ docs/phase12/DEVICE_TEST_LOG.md
 جميع هذه النتائج محلية/ساكنة ما لم يُذكر غير ذلك؛ لم تُنفَّذ اختبارات iPhone أو Xcode أو AltStore هنا.
 
 - اختبار Files + security scope على جهاز، وليس محاكياً.
+
+---
+
+## 24. التحقق متعدد المنصات لأحدث commit
+
+التقرير الكامل: `docs/phase12/CROSS_PLATFORM_VERIFICATION.md`.
+
+| البند | الحالة |
+|---|---|
+| ARM64 Linux hardware (`ubuntu-24.04-arm`) | WORKFLOW PREPARED / NOT EXECUTED؛ الآن يتحقق من `aarch64` وELF AArch64 و`Test 7 = 15960` و`Test 7c = 308` عبر 7 kernels |
+| macOS simulator (`macos-15`, `iphonesimulator`) | WORKFLOW PREPARED / NOT EXECUTED؛ أُضيف build كامل للجهاز بـ Release/بدون توقيع قبل `build-for-testing` وXCTest |
+| AltStore source IPA | WORKFLOW PREPARED / NOT EXECUTED؛ تتم قراءة entitlement blob من التطبيق المستخرج من الـ IPA النهائي، مع فحص غياب المفتاح الممتاز صراحةً |
+| Signed/installed app | BLOCKED؛ لا يوجد IPA موقعّع من Apple ولا تطبيق مثبّت لفحص blob الخاص به |
+| Physical iPhone | BLOCKED |
+| Actual run URLs | **لا توجد**؛ `9451eb9` غير مدفوع و`origin` يشير إلى `161b78f`، و`gh` غير مسجّل الدخول |
+| Local x86 evidence only | Release build بلا تحذيرات، CTest 8/8، YAML 4/4، `run:` 42/42، سكربتات الحزم 2/2 `bash -n`، `git diff --check` نظيف |
+
+لا يُدعى نجاح ARM64 أو macOS أو IPA خارجي قبل توفر run URLs وتقارير فعلية.

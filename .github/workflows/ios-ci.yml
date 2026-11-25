@@ -31,8 +31,11 @@ jobs:
           echo "IOS_BUILD_LOG=$RUNNER_TEMP/ios-xcodebuild.log" >> "$GITHUB_ENV"
           echo "IOS_DERIVED_DATA=$RUNNER_TEMP/LittleBitDerivedData" >> "$GITHUB_ENV"
           echo "IOS_RESULT_BUNDLE=$RUNNER_TEMP/LittleBitTests.xcresult" >> "$GITHUB_ENV"
+          echo "IOS_DEVICE_DERIVED_DATA=$RUNNER_TEMP/LittleBitDeviceDerivedData" >> "$GITHUB_ENV"
+          echo "IOS_DEVICE_BUILD_LOG=$RUNNER_TEMP/ios-device-build.log" >> "$GITHUB_ENV"
 
           touch "$RUNNER_TEMP/ios-xcodebuild.log"
+          touch "$RUNNER_TEMP/ios-device-build.log"
           selected="$(xcode-select -p)"
           for candidate in \
             "/Applications/Xcode_16.4.app" \
@@ -162,6 +165,30 @@ jobs:
           PY
 
           gate_xcodebuild_list
+
+      - name: Build full app for iOS device (Release, unsigned)
+        shell: bash
+        run: |
+          set -uo pipefail
+          rm -rf "$IOS_DEVICE_DERIVED_DATA"
+          set +e
+          xcodebuild build \
+            -project LittleBitLoader.xcodeproj \
+            -scheme LittleBitLoader \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$IOS_DEVICE_DERIVED_DATA" \
+            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee "$IOS_DEVICE_BUILD_LOG"
+          device_build_rc=${PIPESTATUS[0]}
+          set -e
+          echo "DEVICE_BUILD_RC=$device_build_rc" >> "$GITHUB_ENV"
+          exit "$device_build_rc"
 
       - name: Choose iPhone Simulator by name
         shell: bash
@@ -499,31 +526,48 @@ jobs:
           python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
           import os
           import pathlib
+          import plistlib
           import subprocess
           import sys
 
           summary_path = sys.argv[1]
           env = os.environ
+          privileged_key = "com.apple.developer.kernel.increased-memory-limit"
 
-          # Report the entitlement from the checkout instead of a hardcoded note.
+          # Distinguish the privileged source configuration from the AltStore one.
+          # This simulator job reads source configuration only; packaged-artifact
+          # entitlement readback is performed by the AltStore IPA job.
           entitlement_file = pathlib.Path("ios/LittleBitLoader/LittleBitLoader.entitlements")
+          altstore_file = pathlib.Path("ios/LittleBitLoader/LittleBitLoader.AltStore.entitlements")
           project_file = pathlib.Path("LittleBitLoader.xcodeproj/project.pbxproj")
           try:
               entitlement_text = entitlement_file.read_text(encoding="utf-8")
               project_text = project_file.read_text(encoding="utf-8")
               entitlement_wired = (
-                  "com.apple.developer.kernel.increased-memory-limit" in entitlement_text
+                  privileged_key in entitlement_text
                   and "CODE_SIGN_ENTITLEMENTS" in project_text
               )
           except OSError:
               entitlement_wired = False
           if entitlement_wired:
               entitlement_line = (
-                  "- Increased-memory-limit entitlement: present and wired via "
-                  "CODE_SIGN_ENTITLEMENTS; real-device provisioning capability not verified here."
+                  "- Source entitlement plist (privileged path only): "
+                  f"{privileged_key} present and wired via CODE_SIGN_ENTITLEMENTS; "
+                  "not used by the AltStore IPA, and no installed-app blob is inspected here."
               )
           else:
-              entitlement_line = "- Increased-memory-limit entitlement: not present or not wired."
+              entitlement_line = "- Privileged source entitlement: not present or not wired."
+
+          try:
+              altstore_data = plistlib.loads(altstore_file.read_bytes())
+              altstore_restricted = privileged_key in altstore_data
+          except (OSError, plistlib.InvalidFileException):
+              altstore_restricted = True
+          altstore_line = (
+              "- AltStore source entitlement configuration: "
+              + ("restricted key PRESENT (unexpected)" if altstore_restricted else "restricted key absent")
+              + "; packaged IPA readback is checked in the AltStore IPA job."
+          )
 
           products = pathlib.Path(
               env.get("IOS_DERIVED_DATA", ""),
@@ -617,6 +661,7 @@ jobs:
           lines = [
               "## iOS Simulator CI",
               f"- Xcode: {env.get('XCODE_VERSION', 'unknown')}",
+              f"- Full iOS device build rc (Release, unsigned): {env.get('DEVICE_BUILD_RC', 'not-run')}",
               f"- Simulator: {env.get('SIMULATOR_NAME', 'unknown')} (iOS {env.get('SIMULATOR_OS', 'unknown')})",
               f"- Destination: `{env.get('DESTINATION', 'unknown')}`",
           ]
@@ -651,6 +696,7 @@ jobs:
               f"  - `neon_variant_32` found in: {', '.join(symbol_hits) if symbol_hits else 'none'}",
               "- Real-model tests: none in `ios/LittleBitLoaderTests`; model-backed load/generation checks are local-only (no weights downloaded or committed).",
               entitlement_line,
+              altstore_line,
           ])
           with open(summary_path, "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")
@@ -664,6 +710,7 @@ jobs:
           name: ios-xcodebuild-log-and-xcresult
           path: |
             ${{ runner.temp }}/ios-xcodebuild.log
+            ${{ runner.temp }}/ios-device-build.log
             ${{ runner.temp }}/LittleBitTests.xcresult
             ${{ runner.temp }}/xcresult_summary.json
             ${{ runner.temp }}/xctest-summary.txt
@@ -671,9 +718,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  altstore-ipa-optional:
-    name: Optional AltStore-compatible source IPA (workflow_dispatch only)
-    if: github.event_name == 'workflow_dispatch'
+  altstore-ipa:
+    name: AltStore-compatible source IPA verification (macOS)
     runs-on: macos-15
     timeout-minutes: 30
 
@@ -831,19 +877,46 @@ jobs:
             exit 1
           fi
           ./scripts/package_altstore_ipa.sh "$app" "$ipa"
+
+          # Verify the packaged artifact itself, not only the source plist.
+          extract_dir="$RUNNER_TEMP/altstore-ipa-verify"
+          entitlements="$RUNNER_TEMP/altstore-ipa-entitlements.plist"
+          rm -rf "$extract_dir" "$entitlements"
+          mkdir -p "$extract_dir"
+          ditto -x -k "$ipa" "$extract_dir"
+          extracted_app="$extract_dir/Payload/LittleBitLoader.app"
+          [ -d "$extracted_app" ] || { echo "extracted app not found at $extracted_app" >&2; exit 1; }
+          codesign --verify --strict --verbose=2 "$extracted_app"
+          codesign -d --entitlements :- "$extracted_app" > "$entitlements"
+          plutil -lint "$entitlements"
+          plutil -convert json -o - "$entitlements" | python3 -c 'import json, sys; key = "com.apple.developer.kernel.increased-memory-limit"; data = json.load(sys.stdin); print("IPA_ENTITLEMENT_READBACK=restricted-entitlement-absent"); raise SystemExit(1 if key in data else 0)'
+
           echo "AltStore-compatible source IPA: $ipa"
+          echo "Verified entitlement blob from packaged IPA: restricted-entitlement-absent"
           echo "NOTE: this artifact uses ios/LittleBitLoader/LittleBitLoader.AltStore.entitlements."
-          echo "Its ad-hoc signature is not installable by iOS and carries no privileged entitlement."
-          echo "AltStore/AltServer must re-sign it with a free Apple ID."
+          echo "Its ad-hoc signature is integrity-checked only; it is not installable by iOS and carries no privileged entitlement."
+          echo "AltStore/AltServer must re-sign it with a free Apple ID; installed-app entitlements are not verified here."
+          echo "- AltStore IPA entitlement readback from packaged app: restricted key absent (ad-hoc carrier signature only)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Privileged-entitlement IPA (BLOCKED in this workflow)
         if: always()
         shell: bash
         run: |
+          set +e
+          ./scripts/package_privileged_ipa.sh "$RUNNER_TEMP/LittleBitLoader.xcarchive/Products/Applications/LittleBitLoader.app" \
+            "$RUNNER_TEMP/LittleBitLoader-privileged.ipa" \
+            > "$RUNNER_TEMP/privileged-guard.log" 2>&1
+          guard_rc=$?
+          set -e
+          cat "$RUNNER_TEMP/privileged-guard.log"
+          if [ "$guard_rc" -ne 2 ] || ! grep -q '^BLOCKED:' "$RUNNER_TEMP/privileged-guard.log"; then
+            echo "privileged signing guard did not block as expected (rc=$guard_rc)" >&2
+            exit 1
+          fi
           echo "Not produced: the privileged IPA requires an authorized App ID, provisioning profile,"
           echo "and Apple signing identity outside this repository."
           echo "ios/LittleBitLoader/LittleBitLoader.entitlements is preserved for that separate path."
-          echo "scripts/package_privileged_ipa.sh remains blocked without explicit authorization."
+          echo "- Privileged IPA guard: BLOCKED (exit $guard_rc) without explicit authorization/profile." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload AltStore-compatible source IPA and archive log
         if: always()
@@ -854,5 +927,7 @@ jobs:
             ${{ runner.temp }}/LittleBitLoader-altstore-compatible-source.ipa
             ${{ runner.temp }}/LittleBitLoader.xcarchive
             ${{ runner.temp }}/ios-archive.log
+            ${{ runner.temp }}/altstore-ipa-entitlements.plist
+            ${{ runner.temp }}/privileged-guard.log
           if-no-files-found: warn
           retention-days: 7

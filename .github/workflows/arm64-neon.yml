@@ -55,38 +55,78 @@ jobs:
         } >> "$GITHUB_OUTPUT"
         exit $code
 
-    - name: Report Test 7 (NEON raw-bit parity)
+    - name: Verify native ARM64 execution and report Test 7 / Test 7c
       id: test7
       if: always()
       run: |
         set +e
+        runner_arch="$(uname -m)"
+        arch_ok=1
+        printf 'RUNNER_ARCH=%s\n' "$runner_arch" | tee arch-flags.txt
+        case "$runner_arch" in
+          aarch64|arm64) ;;
+          *) arch_ok=0; echo "Expected native aarch64 runner, got $runner_arch" >&2 ;;
+        esac
+
+        result=UNAVAILABLE
+        result7c=UNAVAILABLE
+        cases=0
+        cases7c=0
+        kernels7c=0
+        code=1
         if [ -x build-arm64/test_binary_packer ]; then
+          binary_elf="$(readelf -h build-arm64/test_binary_packer 2>/dev/null || true)"
+          printf '%s\n' "$binary_elf" | grep -q 'AArch64' \
+            || { arch_ok=0; echo 'test_binary_packer is not an AArch64 ELF binary' >&2; }
+          unset LITTLEBIT_DISABLE_NEON
           build-arm64/test_binary_packer > test7.log 2>&1
           code=$?
-          grep -E 'Test 7|NEON VARIANT MISMATCH|NEON BOTH-NAN PAIR MISMATCH|All binary_packer' test7.log || true
-          line=$(grep -E 'Test 7:' test7.log | tail -1 || true)
-          if printf '%s' "$line" | grep -q 'bit-exact'; then result=PASS; else result=FAIL; fi
+          cp test7.log test7c.log
+          grep -E 'Test 7|NEON VARIANT MISMATCH|NEON BOTH-NAN PAIR MISMATCH|NEON4 TAIL REGRESSION|NEON4 TRACE|All binary_packer' test7.log || true
+
+          line=$(grep -F '✓ Test 7:' test7.log | tail -1 || true)
+          line7c=$(grep -F '✓ Test 7c:' test7.log | tail -1 || true)
+          result=FAIL
+          result7c=FAIL
           cases=$(printf '%s' "$line" | sed -n 's/.*(\([0-9][0-9]*\) shape\/pattern cases.*/\1/p')
-          if [ -z "$cases" ]; then
-            cases=0
+          cases7c=$(printf '%s' "$line7c" | sed -n 's/.*(\([0-9][0-9]*\) cases across.*/\1/p')
+          kernels7c=$(printf '%s' "$line7c" | sed -n 's/.* across \([0-9][0-9]*\) kernels.*/\1/p')
+          [ -n "$cases" ] || cases=0
+          [ -n "$cases7c" ] || cases7c=0
+          [ -n "$kernels7c" ] || kernels7c=0
+
+          if printf '%s' "$line" | grep -q 'bit-exact' && [ "$cases" = "15960" ]; then
+            result=PASS
+          else
             code=1
-            result=FAIL
-            echo "Test 7 case count extraction failed from: $line" >&2
-          elif [ "$cases" != "15960" ]; then
+            echo "Test 7 failed or case count mismatch: result line='$line', cases=$cases (expected 15960)" >&2
+          fi
+          if printf '%s' "$line7c" | grep -q 'first divergent intermediate: none' \
+            && [ "$cases7c" = "308" ] && [ "$kernels7c" = "7" ]; then
+            result7c=PASS
+          else
             code=1
-            result=FAIL
-            echo "Test 7 case count mismatch: extracted '$cases', expected 15960" >&2
+            echo "Test 7c failed or case count mismatch: result line='$line7c', cases=$cases7c (expected 308), kernels=$kernels7c (expected 7)" >&2
           fi
         else
-          code=1
-          result=UNAVAILABLE
-          cases=0
           echo 'test_binary_packer binary not available' > test7.log
+          cp test7.log test7c.log
+        fi
+
+        if [ "$arch_ok" -ne 1 ]; then
+          code=1
+          result=FAIL
+          result7c=FAIL
         fi
         {
           echo "code=$code"
+          echo "arch=$runner_arch"
+          echo "arch_ok=$arch_ok"
           echo "result=$result"
           echo "cases=$cases"
+          echo "result7c=$result7c"
+          echo "cases7c=$cases7c"
+          echo "kernels7c=$kernels7c"
         } >> "$GITHUB_OUTPUT"
         exit $code
 
@@ -661,7 +701,7 @@ jobs:
         {
           echo "## ARM64 NEON run summary"
           echo
-          echo "- Runner arch: \`$(uname -m)\`"
+          echo "- Runner arch: \`$(uname -m)\` (native AArch64 gate: \`${{ steps.test7.outputs.arch_ok || 'n/a' }}\`)"
           echo "- Compiler: \`$(g++ --version | head -1)\`"
           echo "- NEON available: \`$(grep '^NEON_AVAILABLE=' bench-flags.txt 2>/dev/null | tail -1 | cut -d= -f2 || echo unknown)\`"
           echo "- ARM64 engine binary matvec dispatch: \`$(grep -q 'bench::neon_variant_32' src/binary_packer.cpp && echo 'NEON32 (littlebit::bench::neon_variant_32)' || echo unknown)\` when \`LITTLEBIT_DISABLE_NEON\` is unset; frozen scalar fallback when set."
@@ -669,6 +709,7 @@ jobs:
           echo "- ctest (NEON enabled): ${{ steps.ctest_neon.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_neon.outputs.code || 'n/a' }}\`)"
           echo "- ctest (NEON disabled): ${{ steps.ctest_scalar.outputs.summary || 'no result' }} (exit \`${{ steps.ctest_scalar.outputs.code || 'n/a' }}\`)"
           echo "- Test 7 raw-bit parity: ${{ steps.test7.outputs.result || 'unknown' }} (${{ steps.test7.outputs.cases || '0' }} cases)"
+          echo "- Test 7c NEON4 tail regression: ${{ steps.test7.outputs.result7c || 'unknown' }} (${{ steps.test7.outputs.cases7c || '0' }} cases across ${{ steps.test7.outputs.kernels7c || '0' }} kernels)"
           echo "- Ordered FP disassembly check: \`$(grep '^DISASM_CHECK=' disasm-flags.txt 2>/dev/null | cut -d= -f2 || echo unknown)\`"
           if [ -s disasm-flags.txt ]; then
             grep -E '^(DISASM_FUNCTIONS|DISASM_FADD|DISASM_FSUB|DISASM_FMA|DISASM_ORDER_UNVERIFIED|DISASM_WARNING)=' disasm-flags.txt | sed 's/^/- /'
@@ -715,6 +756,8 @@ jobs:
           ctest-neon.log
           ctest-scalar.log
           test7.log
+          test7c.log
+          arch-flags.txt
           bench-variants.log
           bench.md
           bench-flags.txt

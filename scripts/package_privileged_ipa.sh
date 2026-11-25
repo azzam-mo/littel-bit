@@ -35,7 +35,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "ERROR: package_privileged_ipa.sh requires macOS (codesign/plutil/lipo/security)." >&2
   exit 1
 fi
-for tool in codesign plutil lipo security python3 shasum; do
+for tool in codesign plutil lipo ditto security python3 shasum; do
   command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: missing required tool: $tool" >&2; exit 1; }
 done
 [ -d "$APP" ] || { echo "ERROR: app bundle not found: $APP" >&2; exit 1; }
@@ -56,6 +56,8 @@ fail() {
 }
 
 plutil -lint "$STAGED_APP/Info.plist" >/dev/null || fail "built app Info.plist is invalid"
+bundle_id="$(plutil -extract CFBundleIdentifier raw -o - "$STAGED_APP/Info.plist")"
+[ "$bundle_id" = "com.littlebit.loader" ] || fail "unexpected CFBundleIdentifier: $bundle_id"
 executable="$(plutil -extract CFBundleExecutable raw -o - "$STAGED_APP/Info.plist")"
 [ -f "$STAGED_APP/$executable" ] || fail "bundle executable not found: $executable"
 archs="$(lipo -archs "$STAGED_APP/$executable")"
@@ -72,6 +74,16 @@ plutil -extract Entitlements json -o - "$WORK/profile.plist" 2>/dev/null \
   | python3 -c 'import json, sys; data = json.load(sys.stdin); raise SystemExit(0 if data.get(sys.argv[1]) is True else 1)' "$PRIVILEGED_KEY" \
   || fail "provisioning profile does not permit $PRIVILEGED_KEY"
 
+profile_app_id="$(plutil -extract Entitlements json -o - "$WORK/profile.plist" 2>/dev/null \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin).get("application-identifier", ""))')"
+case "$profile_app_id" in
+  *."$bundle_id"|"$bundle_id") ;;
+  *) fail "provisioning profile application-identifier '$profile_app_id' does not match $bundle_id" ;;
+esac
+security find-identity -v -p codesigning \
+  | grep -F -- "$LITTLEBIT_SIGNING_IDENTITY" >/dev/null \
+  || fail "signing identity '$LITTLEBIT_SIGNING_IDENTITY' is not available in the keychain"
+
 cp "$LITTLEBIT_PROVISIONING_PROFILE" "$STAGED_APP/embedded.mobileprovision"
 codesign --force --sign "$LITTLEBIT_SIGNING_IDENTITY" --timestamp=none \
   --entitlements "$ENTITLEMENTS" \
@@ -87,10 +99,37 @@ plutil -convert json -o - "$WORK/app-entitlements.plist" \
   || fail "$PRIVILEGED_KEY is missing from the signed entitlement blob"
 
 mkdir -p "$(dirname "$OUTPUT")"
-python3 "$ROOT/scripts/package_ipa.py" "$STAGED_APP" "$OUTPUT"
+python3 "$ROOT/scripts/package_ipa.py" "$STAGED_APP" "$OUTPUT" > "$WORK/package.log" 2>&1 || {
+  cat "$WORK/package.log" >&2
+  fail "could not package IPA"
+}
+
+# Verify the archived artifact, not only the staged app used to sign it.
+IPA_EXTRACT="$WORK/ipa-extract"
+mkdir -p "$IPA_EXTRACT"
+ditto -x -k "$OUTPUT" "$IPA_EXTRACT" || fail "could not extract packaged IPA for verification"
+IPA_APP="$IPA_EXTRACT/Payload/LittleBitLoader.app"
+[ -d "$IPA_APP" ] || fail "packaged IPA is missing Payload/LittleBitLoader.app"
+codesign --verify --strict --verbose=2 "$IPA_APP" > "$WORK/ipa-codesign-verify.log" 2>&1 || {
+  cat "$WORK/ipa-codesign-verify.log" >&2
+  fail "packaged IPA signature did not verify"
+}
+codesign -d --entitlements :- "$IPA_APP" > "$WORK/ipa-entitlements.plist" 2>"$WORK/ipa-codesign-display.log" \
+  || fail "could not read entitlements from packaged IPA"
+plutil -lint "$WORK/ipa-entitlements.plist" >/dev/null \
+  || fail "packaged IPA entitlement blob is not a valid plist"
+plutil -convert json -o - "$WORK/ipa-entitlements.plist" \
+  | python3 -c 'import json, sys; data = json.load(sys.stdin); raise SystemExit(0 if data.get(sys.argv[1]) is True else 1)' "$PRIVILEGED_KEY" \
+  || fail "$PRIVILEGED_KEY is missing from the packaged IPA entitlement blob"
+ipa_app_id="$(plutil -convert json -o - "$WORK/ipa-entitlements.plist" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin).get("application-identifier", ""))')"
+case "$ipa_app_id" in
+  *."$bundle_id"|"$bundle_id") ;;
+  *) fail "packaged IPA application-identifier '$ipa_app_id' does not match $bundle_id" ;;
+esac
 
 echo "Privileged IPA: $OUTPUT"
 echo "SHA-256: $(shasum -a 256 "$OUTPUT" | awk '{print $1}')"
 echo "Architectures: $archs"
-echo "Verified entitlement blob: $PRIVILEGED_KEY=true"
+echo "Verified packaged IPA entitlement blob: $PRIVILEGED_KEY=true"
 echo "NOTE: physical-device installation remains UNVERIFIED until the signed IPA is installed and inspected on a device."

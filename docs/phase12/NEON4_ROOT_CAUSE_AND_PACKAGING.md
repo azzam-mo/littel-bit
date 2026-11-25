@@ -8,10 +8,11 @@
 | Binary packer exactness (x86 scalar/AVX2 paths compiled here) | PASS |
 | ARM64 NEON execution | BLOCKED — host is `x86_64`; no `qemu-aarch64`, `aarch64-linux-gnu-g++`, or `clang++` |
 | macOS Xcode / XCTest | BLOCKED — no macOS runner, `xcodebuild`, `codesign`, `plutil`, `lipo`, `security`, or device |
-| IPA packaging / AltServer re-signing | BLOCKED — scripts are static-checked only |
-| Entitlement validation | Static only: original privileged plist preserved; AltStore plist empty; no installed-app blob inspected |
+| IPA packaging / AltServer re-signing | BLOCKED — scripts are static-checked only; packaged-IPA extraction/readback is now part of both packaging paths but has not run on macOS |
+| Entitlement validation | Static/workflow only: original privileged plist preserved; AltStore plist empty; final-IPA blob check added; no installed-app blob inspected |
+| Cross-platform CI runs for `9451eb9` | BLOCKED — latest commit is not on `origin` and `gh` is unauthenticated; see `docs/phase12/CROSS_PLATFORM_VERIFICATION.md` |
 | Workflow YAML | PASS — 4/4 parsed with `yaml.safe_load` |
-| Workflow `run:` shell syntax | PASS — 41/41 blocks parsed with `bash -n` |
+| Workflow `run:` shell syntax | PASS — 42/42 blocks parsed with `bash -n` |
 | pbxproj validators | PASS — `validate_pbxproj.py` and `check_xcode_project.py` |
 | C++ warning cleanup | PASS — clean Release rebuild with `-Wall -Wextra` (0 warnings); Swift changes are code-reviewed only |
 | Swift warning cleanup | CODE ADDED — no local `swiftc`/Xcode; `@unknown default` and unused locals addressed |
@@ -106,9 +107,9 @@ The workflow archives with `CODE_SIGNING_ALLOWED=NO`, `CODE_SIGNING_REQUIRED=NO`
 
 - `scripts/package_altstore_ipa.sh` now rejects any AltStore entitlement file or readback blob containing `com.apple.developer.kernel.increased-memory-limit`.
 - Both packaging scripts parse plists as JSON before lookup, because the dot-containing entitlement key is not a dotted `plutil` key path.
-- It reports `Verified entitlement blob: no privileged entitlements` instead of claiming the privileged key.
-- `scripts/package_privileged_ipa.sh` exits 2 unless `LITTLEBIT_PRIVILEGED_SIGNING_AUTHORIZED=1`, `LITTLEBIT_SIGNING_IDENTITY`, and `LITTLEBIT_PROVISIONING_PROFILE` are supplied. It also decodes the profile with `security cms -D` and requires the key to be `true` there before signing. It was not executed.
-- `.github/workflows/ios-ci.yml` uses the AltStore script in `altstore-ipa-optional`, uploads the new artifact name, and prints a separate BLOCKED step for the privileged path.
+- It reports `Verified packaged IPA entitlement blob: no privileged entitlements` instead of claiming the privileged key; the check is performed on the app extracted from the final IPA.
+- `scripts/package_privileged_ipa.sh` exits 2 unless `LITTLEBIT_PRIVILEGED_SIGNING_AUTHORIZED=1`, `LITTLEBIT_SIGNING_IDENTITY`, and `LITTLEBIT_PROVISIONING_PROFILE` are supplied. It decodes the profile with `security cms -D`, requires the restricted key to be `true`, requires the profile `application-identifier` to match `com.littlebit.loader`, verifies the identity is in the keychain, and re-reads the final signed IPA blob. It was not executed.
+- `.github/workflows/ios-ci.yml` uses the AltStore script in the `altstore-ipa` job (now automatic on push/PR/dispatch), uploads the preserved artifact name, and invokes the privileged script to assert its `BLOCKED` exit-2 guard.
 - `docs/phase12/AltStore-source.example.json` now declares `appPermissions.entitlements: []` to match the source IPA.
 
 ### Entitlement claims
@@ -169,8 +170,18 @@ On a real ARM64 macOS runner:
 1. Build Linux-equivalent ARM64 target and run `test_binary_packer`; confirm Test 7 = 15,960 cases and Test 7c = 308 cases, both PASS.
 2. Run the NEON disassembly checker; confirm ordered `fadd`/`fsub` and no FMA-family instructions.
 3. Run `xcodebuild test` on the iOS Simulator; record real XCTest counts.
-4. Run `workflow_dispatch` for the AltStore-compatible source IPA; record SHA-256, `lipo -archs`, and empty entitlement blob readback.
+4. Run the AltStore-compatible source IPA job on macOS (push/PR/dispatch); record SHA-256, `lipo -archs`, ad-hoc verification, and the absence of the restricted key in the final packaged IPA blob.
 5. With an authorized identity/profile, run the privileged script separately; do not infer its result from step 4.
 6. Install with AltStore or the authorized path, inspect the installed app/profile, then execute P12-T01–T11 in `docs/phase12/DEVICE_TEST_LOG.md`.
 
 Until those steps produce evidence, Phase 12 remains `BLOCKED` for real-device validation.
+
+---
+
+## 6. Cross-platform CI preparation
+
+- `arm64-neon.yml` now fails unless the runner is `aarch64`/`arm64`, the test binary is an AArch64 ELF, Test 7 reports exactly 15,960 cases, and Test 7c reports exactly 308 cases across 7 kernels with no first divergent intermediate.
+- `ios-ci.yml` now performs a full unsigned Release device build before the arm64 simulator `build-for-testing`/`test-without-building` XCTest run. The AltStore IPA job is no longer dispatch-only.
+- Both AltStore packaging paths now extract the **final IPA** and read the entitlement blob from the packaged app; the restricted key must be absent. The privileged script additionally checks profile App ID matching, keychain identity availability, and the final signed IPA blob.
+- The stale macOS workflow assertion that expected `increased-memory-limit=true` in the AltStore IPA was corrected to assert exact-key absence.
+- No external run was available for commit `9451eb9`; the complete blocker/run-URL matrix is in `docs/phase12/CROSS_PLATFORM_VERIFICATION.md`.
