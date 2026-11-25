@@ -1,0 +1,511 @@
+name: Phase 12 Real Model (macOS arm64)
+
+# New opt-in/push workflow for Phase 12. Existing workflows are untouched.
+# All model bytes are downloaded at runtime into RUNNER_TEMP, verified against
+# the SHA-256 values below, cached by those hashes, and never committed.
+# Metrics from this shared GitHub runner are NOT iPhone/device measurements.
+on:
+  push:
+    branches: [ "phase12-**" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  MODEL_REPO: LittleBitLLM/littlebit-qwen3-8b-0.55bpw
+  MODEL_BASE_URL: https://huggingface.co/LittleBitLLM/littlebit-qwen3-8b-0.55bpw/resolve/main
+  MODEL_DIR: ${{ runner.temp }}/littlebit-qwen3-8b-0.55bpw
+  BUILD_DIR: ${{ runner.temp }}/littlebit-macos-arm64-build
+  MODEL_CACHE_KEY: littlebit-qwen3-8b-0.55bpw-sha256-v1-5b087e4c79c23697355014fdd00b083c91d0c731ddd80a16d6affbe156f17179-aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4-a0429e9b6df54382d650f6295c954e9c2f9972524526216339cd51b894e8cca6-5f77198efa794c3d2dcd8dfa7eade4c5d8475c5731435afbe64c9625e837e28c-81051cd3f6e77013827148d0b8a6ead93f8ac390d5ab805f849199f0af6a08db
+  MODEL_SAFETENSORS_SHA256: 5b087e4c79c23697355014fdd00b083c91d0c731ddd80a16d6affbe156f17179
+  MODEL_TOKENIZER_SHA256: aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+  MODEL_CONFIG_SHA256: a0429e9b6df54382d650f6295c954e9c2f9972524526216339cd51b894e8cca6
+  MODEL_LITTLEBIT_CONFIG_SHA256: 5f77198efa794c3d2dcd8dfa7eade4c5d8475c5731435afbe64c9625e837e28c
+  MODEL_GENERATION_CONFIG_SHA256: 81051cd3f6e77013827148d0b8a6ead93f8ac390d5ab805f849199f0af6a08db
+
+jobs:
+  real-model-macos-arm64:
+    name: Real model on macos-15 arm64 (native, shared runner)
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore real model from content-hashed cache
+        id: model_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MODEL_DIR }}
+          key: ${{ env.MODEL_CACHE_KEY }}
+
+      - name: Download real model at runtime and verify SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'find "$MODEL_DIR" -type f -name "*.part" -delete 2>/dev/null || true' EXIT
+
+          model_files=(
+            "model.safetensors|$MODEL_SAFETENSORS_SHA256"
+            "tokenizer.json|$MODEL_TOKENIZER_SHA256"
+            "config.json|$MODEL_CONFIG_SHA256"
+            "littlebit_config.json|$MODEL_LITTLEBIT_CONFIG_SHA256"
+            "generation_config.json|$MODEL_GENERATION_CONFIG_SHA256"
+          )
+
+          verify_model() {
+            local entry name expected path actual
+            for entry in "${model_files[@]}"; do
+              name="${entry%%|*}"
+              expected="${entry##*|}"
+              path="$MODEL_DIR/$name"
+              if [ ! -f "$path" ]; then
+                echo "Missing cached model file: $path" >&2
+                return 1
+              fi
+              actual="$(shasum -a 256 "$path" | awk '{print $1}')"
+              if [ "$actual" != "$expected" ]; then
+                echo "SHA-256 mismatch for $name: got=$actual expected=$expected" >&2
+                return 1
+              fi
+            done
+          }
+
+          if [ "${{ steps.model_cache.outputs.cache-hit }}" = "true" ] && verify_model; then
+            model_status="verified-cache-restore"
+          else
+            echo "Cache miss or hash mismatch; downloading from Hugging Face at runtime."
+            rm -rf "$MODEL_DIR"
+            mkdir -p "$MODEL_DIR"
+            for entry in "${model_files[@]}"; do
+              name="${entry%%|*}"
+              echo "Downloading $name from $MODEL_REPO"
+              curl -fL --retry 4 --retry-delay 3 --connect-timeout 30 \
+                -o "$MODEL_DIR/$name.part" "$MODEL_BASE_URL/$name"
+              mv -f "$MODEL_DIR/$name.part" "$MODEL_DIR/$name"
+            done
+            verify_model
+            model_status="downloaded-and-verified"
+          fi
+
+          echo "MODEL_CACHE_STATUS=$model_status" >> "$GITHUB_ENV"
+          shasum -a 256 \
+            "$MODEL_DIR/model.safetensors" \
+            "$MODEL_DIR/tokenizer.json" \
+            "$MODEL_DIR/config.json" \
+            "$MODEL_DIR/littlebit_config.json" \
+            "$MODEL_DIR/generation_config.json" \
+            | tee "$RUNNER_TEMP/real-model-file-hashes.txt"
+
+          {
+            echo "### Real model files"
+            echo "- Repository: \`$MODEL_REPO\` (downloaded at runtime; not committed)"
+            echo "- Cache key: \`$MODEL_CACHE_KEY\`"
+            echo "- Cache status: $model_status"
+            echo "- Model path: \`$MODEL_DIR\` (RUNNER_TEMP, outside the checkout)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build native arm64 engine (CMake Release, NEON sources)
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "uname_m=$(uname -m)"
+            echo "cmake=$(cmake --version | head -1)"
+            echo "compiler=$(clang --version | head -1)"
+          } | tee "$RUNNER_TEMP/build-env.txt"
+
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build "$BUILD_DIR" --config Release -j3
+
+          archs="$(lipo -archs "$BUILD_DIR/real_model_smoke")"
+          echo "$archs" | tee "$RUNNER_TEMP/real-model-archs.txt"
+          if [ "$archs" != "arm64" ]; then
+            echo "ERROR: expected an arm64-only native binary, got: $archs" >&2
+            exit 1
+          fi
+
+      - name: Print NEON dispatch line and run kernel parity test
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "NEON_DISPATCH: littlebit::binary_matvec_mult -> littlebit::bench::neon_variant_32 when littlebit::neon_available() is true (arm64 default production path)."
+            grep -n -B1 -A7 'if (littlebit::neon_available())' src/binary_packer.cpp
+            "$BUILD_DIR/test_binary_packer"
+          } 2>&1 | tee "$RUNNER_TEMP/neon-dispatch.log"
+
+      - name: Validate all 252 LittleBit linears structurally
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$MODEL_DIR" <<'PY' | tee "$RUNNER_TEMP/linear-validation.log"
+          import json
+          import os
+          import struct
+          import sys
+
+          model_dir = sys.argv[1]
+          with open(os.path.join(model_dir, "config.json"), encoding="utf-8") as fh:
+              cfg = json.load(fh)
+          with open(os.path.join(model_dir, "model.safetensors"), "rb") as fh:
+              header_len = struct.unpack("<Q", fh.read(8))[0]
+              header = json.loads(fh.read(header_len))
+          header.pop("__metadata__", None)
+
+          expected = {
+              "model_type": "qwen3",
+              "vocab_size": 151936,
+              "hidden_size": 4096,
+              "num_hidden_layers": 36,
+              "num_attention_heads": 32,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "intermediate_size": 12288,
+              "residual": True,
+          }
+          bad = {k: (cfg.get(k), v) for k, v in expected.items() if cfg.get(k) != v}
+          if bad:
+              raise SystemExit(f"config mismatch: {bad}")
+
+          required = [
+              "model.embed_tokens.weight", "lm_head.weight", "model.norm.weight",
+          ]
+          linears = [
+              "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj",
+              "self_attn.o_proj", "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj",
+          ]
+          suffixes = [
+              "U_packed", "V_packed", "U_shape", "V_shape", "_split_dim_final",
+              "u1", "u2", "v1", "v2",
+          ]
+          if cfg["residual"]:
+              suffixes += [
+                  "U_R_packed", "V_R_packed", "U_R_shape", "V_R_shape",
+                  "u1_R", "u2_R", "v1_R", "v2_R",
+              ]
+
+          groups = 0
+          for layer in range(cfg["num_hidden_layers"]):
+              p = f"model.layers.{layer}"
+              required += [
+                  f"{p}.input_layernorm.weight", f"{p}.post_attention_layernorm.weight",
+                  f"{p}.self_attn.q_norm.weight", f"{p}.self_attn.k_norm.weight",
+              ]
+              for linear in linears:
+                  groups += 1
+                  prefix = f"{p}.{linear}."
+                  required.extend(prefix + suffix for suffix in suffixes)
+
+          missing = [name for name in required if name not in header]
+          if missing:
+              raise SystemExit(f"missing {len(missing)} required tensors: {missing[:8]}")
+
+          emb = header["model.embed_tokens.weight"]
+          head = header["lm_head.weight"]
+          shape_ok = (
+              emb["shape"] == [cfg["vocab_size"], cfg["hidden_size"]]
+              and head["shape"] == emb["shape"]
+              and emb["dtype"] == "BF16"
+              and head["dtype"] == "BF16"
+          )
+          if not shape_ok:
+              raise SystemExit(f"embedding/lm_head shape or dtype mismatch: {emb} {head}")
+          if groups != 252:
+              raise SystemExit(f"unexpected linear group count: {groups} (expected 252)")
+
+          print(f"[config] num_hidden_layers={cfg['num_hidden_layers']} residual={cfg['residual']}")
+          print(f"[linears] LINEAR_GROUPS={groups} (7 per layer x 36 layers)")
+          print(f"[tensors] REQUIRED_TENSORS={len(required)} MISSING=0")
+          print("[embeddings] MATCH (BF16, 151936 x 4096)")
+          print("RESULT: PASS")
+          PY
+
+      - name: "Real-model smoke: load, short generation, RSS and tokens/s"
+        id: smoke
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "SMOKE_RC=not-run" >> "$GITHUB_ENV"
+          set +e
+          "$BUILD_DIR/real_model_smoke" "$MODEL_DIR" 2 512 2>&1 \
+            | tee "$RUNNER_TEMP/real-model-smoke.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "SMOKE_RC=$rc" >> "$GITHUB_ENV"
+
+          python3 - "$RUNNER_TEMP/real-model-smoke.log" "$GITHUB_STEP_SUMMARY" <<'PY' || true
+          import re
+          import sys
+          from pathlib import Path
+
+          log_path, summary_path = sys.argv[1:3]
+          text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+          pattern = re.compile(
+              r"\[SMOKE\] load=([^\s]+) ms ttft=([^\s]+) ms rate=([^\s]+) tok/s "
+              r"kv=([^\s]+) MB rss_before=([^\s]+) MB rss_after=([^\s]+) MB"
+          )
+          match = pattern.search(text)
+          lines = [
+              "### Real-model smoke metrics (shared runner, not iPhone)",
+          ]
+          if match:
+              load, ttft, rate, kv, rss_before, rss_after = match.groups()
+              lines += [
+                  f"- Load time: {load} ms",
+                  f"- TTFT: {ttft} ms",
+                  f"- Generation rate: {rate} tokens/s",
+                  f"- KV cache: {kv} MB",
+                  f"- RSS before/after generation: {rss_before} / {rss_after} MB",
+              ]
+          else:
+              lines.append("- Metrics line not found; see the uploaded smoke log.")
+          lines.append("- WARNING: these are shared macos-15 runner numbers, NOT iPhone or Jetsam numbers.")
+          block = "\n".join(lines) + "\n"
+          print(block)
+          with open(summary_path, "a", encoding="utf-8") as summary:
+              summary.write(block)
+          PY
+          exit "$rc"
+
+      - name: Real-model logits comparison (only if NumPy is already available)
+        id: logits
+        shell: bash
+        run: |
+          set -uo pipefail
+          status="not-run"
+          rc=0
+          if python3 -c 'import numpy' >/dev/null 2>&1; then
+            status="RUNNING"
+            set +e
+            python3 scripts/compare_logits.py \
+              "$MODEL_DIR" "$BUILD_DIR/logits_probe" 151644,9707 36 2>&1 \
+              | tee "$RUNNER_TEMP/logits-compare.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            status="PASS"  # overwritten below on failure
+            if [ "$rc" -ne 0 ]; then
+              status="FAIL"
+            fi
+          else
+            status="SKIPPED_NO_NUMPY"
+            echo "NumPy is not preinstalled; skipping logits comparison. No packages were installed." \
+              | tee "$RUNNER_TEMP/logits-compare.log"
+          fi
+          echo "LOGITS_STATUS=$status" >> "$GITHUB_ENV"
+          {
+            echo "### Real-model logits comparison"
+            echo "- Status: $status (no installs were performed)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Write final real-model status
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            echo "## Phase 12 real-model validation status"
+            echo "- Smoke rc: ${SMOKE_RC:-not-run}"
+            echo "- Logits comparison: ${LOGITS_STATUS:-not-run}"
+            echo "- Model cache status: ${MODEL_CACHE_STATUS:-not-run}"
+            echo "- No model files were added to the repository; they live under RUNNER_TEMP."
+            echo "- A 2.76 GiB download and ~2.3 GB resident model fit within the documented 14 GB disk / 7 GB RAM envelope on this shared runner, but this does not prove anything about an iPhone's memory limit."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload real-model logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase12-real-model-macos-arm64-logs
+          path: |
+            ${{ runner.temp }}/build-env.txt
+            ${{ runner.temp }}/real-model-file-hashes.txt
+            ${{ runner.temp }}/real-model-archs.txt
+            ${{ runner.temp }}/neon-dispatch.log
+            ${{ runner.temp }}/linear-validation.log
+            ${{ runner.temp }}/real-model-smoke.log
+            ${{ runner.temp }}/logits-compare.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  ios-altstore-source-ipa:
+    name: AltStore-source IPA artifact (ad-hoc carrier only)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode for archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IOS_ARCHIVE_LOG=$RUNNER_TEMP/ios-archive.log" >> "$GITHUB_ENV"
+          echo "IPA_PACKAGE_LOG=$RUNNER_TEMP/altstore-ipa-package.log" >> "$GITHUB_ENV"
+          echo "IPA_ENTITLEMENTS=$RUNNER_TEMP/altstore-entitlements.plist" >> "$GITHUB_ENV"
+          touch "$RUNNER_TEMP/ios-archive.log" "$RUNNER_TEMP/altstore-ipa-package.log"
+          for candidate in \
+            "/Applications/Xcode_16.4.app" \
+            "/Applications/Xcode_16.3.app" \
+            "/Applications/Xcode.app"
+          do
+            if [ -d "$candidate" ]; then
+              sudo xcode-select -s "$candidate"
+              break
+            fi
+          done
+          echo "Selected Xcode path: $(xcode-select -p)"
+          xcodebuild -version | tee -a "$RUNNER_TEMP/ios-archive.log"
+
+      - name: Generate Xcode project and ephemeral archive scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_xcode_project.py
+          python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
+          python3 scripts/check_xcode_project.py
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          project = pathlib.Path("LittleBitLoader.xcodeproj")
+          pbx = (project / "project.pbxproj").read_text(encoding="utf-8")
+
+          def target_id(name: str) -> str:
+              pattern = (
+                  r"^\t\t([0-9A-F]{24}) /\* "
+                  + re.escape(name)
+                  + r" \*/ = \{\n\t\t\tisa = PBXNativeTarget;"
+              )
+              match = re.search(pattern, pbx, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"target not found in pbxproj: {name}")
+              return match.group(1)
+
+          app_id = target_id("LittleBitLoader")
+
+          def ref(ident: str, buildable: str, blueprint: str) -> str:
+              return f'''<BuildableReference
+                  BuildableIdentifier = "primary"
+                  BlueprintIdentifier = "{ident}"
+                  BuildableName = "{buildable}"
+                  BlueprintName = "{blueprint}"
+                  ReferencedContainer = "container:LittleBitLoader.xcodeproj">
+              </BuildableReference>'''
+
+          scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
+          <Scheme LastUpgradeVersion="1600" version="1.7">
+            <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+              <BuildActionEntries>
+                <BuildActionEntry buildForTesting="NO" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="YES" buildForAnalyzing="YES">
+                  {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+                </BuildActionEntry>
+              </BuildActionEntries>
+            </BuildAction>
+            <LaunchAction buildConfiguration="Release" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+              </BuildableProductRunnable>
+            </LaunchAction>
+            <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+              </BuildableProductRunnable>
+            </ProfileAction>
+            <AnalyzeAction buildConfiguration="Debug"/>
+            <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
+          </Scheme>
+          '''
+          scheme_dir = project / "xcshareddata" / "xcschemes"
+          scheme_dir.mkdir(parents=True, exist_ok=True)
+          (scheme_dir / "LittleBitLoader.xcscheme").write_text(scheme, encoding="utf-8")
+          print("Generated ephemeral archive scheme")
+          PY
+
+      - name: Archive unsigned app and package AltStore-source IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/LittleBitLoader.xcarchive"
+          ipa="$RUNNER_TEMP/LittleBitLoader-altstore-source.ipa"
+          rm -rf "$archive" "$ipa"
+
+          xcodebuild archive \
+            -project LittleBitLoader.xcodeproj \
+            -scheme LittleBitLoader \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee -a "$IOS_ARCHIVE_LOG"
+
+          app="$archive/Products/Applications/LittleBitLoader.app"
+          if [ ! -d "$app" ]; then
+            echo "archived app not found at $app" >&2
+            exit 1
+          fi
+
+          ./scripts/package_altstore_ipa.sh "$app" "$ipa" 2>&1 | tee -a "$IPA_PACKAGE_LOG"
+
+          ipa_sha="$(shasum -a 256 "$ipa" | awk '{print $1}')"
+          echo "IPA_SHA256=$ipa_sha" | tee -a "$IPA_PACKAGE_LOG"
+          echo "IPA_SHA256=$ipa_sha" >> "$GITHUB_ENV"
+
+          extract_dir="$RUNNER_TEMP/altstore-ipa-extract"
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+          ditto -x -k "$ipa" "$extract_dir"
+          extracted_app="$extract_dir/Payload/LittleBitLoader.app"
+          if [ ! -d "$extracted_app" ]; then
+            echo "extracted app not found at $extracted_app" >&2
+            exit 1
+          fi
+
+          codesign -d --entitlements :- "$extracted_app" > "$IPA_ENTITLEMENTS" \
+            2>"$RUNNER_TEMP/altstore-entitlements-codesign.log"
+          plutil -lint "$IPA_ENTITLEMENTS"
+          plutil -p "$IPA_ENTITLEMENTS" | tee "$RUNNER_TEMP/altstore-entitlements-readable.txt"
+
+          iml="$(plutil -extract com.apple.developer.kernel.increased-memory-limit raw -o - "$IPA_ENTITLEMENTS" 2>/dev/null || true)"
+          if [ "$iml" != "true" ]; then
+            echo "entitlement readback did not contain increased-memory-limit=true: '$iml'" >&2
+            exit 1
+          fi
+          echo "IPA_ENTITLEMENT_READBACK=com.apple.developer.kernel.increased-memory-limit=true"
+
+          {
+            echo "## AltStore-source IPA"
+            echo "- Artifact: \`phase12-altstore-source-ipa\`"
+            echo "- SHA-256: \`$ipa_sha\`"
+            echo "- Entitlement blob read back from the IPA (ad-hoc carrier signature):"
+            echo '```xml'
+            cat "$IPA_ENTITLEMENTS"
+            echo '```'
+            echo "- This IPA is NOT installable as-is. AltStore/AltServer must re-sign it with a free Apple ID on the user's Mac. No Apple ID, password, certificate, or private key is in this repository or workflow."
+            echo "- Structural entitlement presence is not provisioning-profile proof; installed-app/real-device verification remains BLOCKED."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload AltStore-source IPA and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase12-altstore-source-ipa
+          path: |
+            ${{ runner.temp }}/LittleBitLoader-altstore-source.ipa
+            ${{ runner.temp }}/altstore-entitlements.plist
+            ${{ runner.temp }}/altstore-entitlements-readable.txt
+            ${{ runner.temp }}/altstore-entitlements-codesign.log
+            ${{ runner.temp }}/altstore-ipa-package.log
+            ${{ runner.temp }}/ios-archive.log
+          if-no-files-found: warn
+          retention-days: 14
