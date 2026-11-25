@@ -243,6 +243,49 @@ jobs:
           echo "BUILD_RC=$build_rc" >> "$GITHUB_ENV"
           if [ "$build_rc" -ne 0 ]; then
             echo "build-for-testing failed with rc=$build_rc" >&2
+            python3 - "$IOS_BUILD_LOG" "$GITHUB_STEP_SUMMARY" <<'PY' || true
+          import pathlib
+          import re
+          import sys
+
+          log_path = pathlib.Path(sys.argv[1])
+          summary_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
+          lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+          error_re = re.compile(r": (?:fatal )?error:")
+          seen = set()
+          errors = []
+          for index, line in enumerate(lines):
+              if not error_re.search(line) or line in seen:
+                  continue
+              seen.add(line)
+              errors.append((index, line))
+              if len(errors) == 40:
+                  break
+
+          warning_lines = list(dict.fromkeys(
+              line for line in lines
+              if "LittleBitEngine.swift" in line and "warning:" in line
+          ))
+
+          block = ["### Compiler diagnostics (build failure)", "", "```text"]
+          if errors:
+              for index, line in errors:
+                  block.append(line)
+                  block.extend(lines[index + 1:index + 3])
+          else:
+              block.append("No ': error:' / ': fatal error:' lines found in the build log.")
+          block.extend(["```", ""])
+          if warning_lines:
+              block.extend(["### Warnings from LittleBitEngine.swift", "", "```text"])
+              block.extend(warning_lines)
+              block.extend(["```", ""])
+
+          if summary_path and summary_path.parent.is_dir():
+              existing = summary_path.read_text(encoding="utf-8", errors="replace") if summary_path.is_file() else ""
+              summary_path.write_text("\n".join(block) + ("\n" + existing if existing else ""), encoding="utf-8")
+          print("\n".join(block))
+          PY
             first_error_line="$(grep -n -m 1 -E 'error:|fatal error:' "$IOS_BUILD_LOG" | cut -d: -f1 || true)"
             if [ -n "$first_error_line" ]; then
               context_start=$(( first_error_line > 10 ? first_error_line - 10 : 1 ))

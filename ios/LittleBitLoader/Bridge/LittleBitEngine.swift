@@ -116,13 +116,11 @@ class LittleBitEngine: ObservableObject {
             guard let self = self else { return }
             self.isGenerating = false
             self.state = .ready
-            if let m = metrics {
-                self.loadTimeMs = m.loadTimeMs
-                self.ttftMs = m.ttftMs
-                self.tokensPerSecond = m.tokensPerSecond
-                self.kvCacheMB = m.kvCacheMB
-                self.ramUsedMB = m.residentMemoryMB
-            }
+            self.loadTimeMs = metrics.loadTimeMs
+            self.ttftMs = metrics.ttftMs
+            self.tokensPerSecond = metrics.tokensPerSecond
+            self.kvCacheMB = metrics.kvCacheMB
+            self.ramUsedMB = metrics.residentMemoryMB
         }
     }
 
