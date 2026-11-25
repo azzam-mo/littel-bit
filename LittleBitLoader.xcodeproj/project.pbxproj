@@ -262,6 +262,7 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				"ARCHS[sdk=iphoneos*]" = arm64;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = "ios/LittleBitLoader/LittleBitLoader.entitlements";
 				ENABLE_TESTABILITY = YES;
 				INFOPLIST_FILE = "ios/LittleBitLoader/Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;
@@ -286,6 +287,7 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				"ARCHS[sdk=iphoneos*]" = arm64;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = "ios/LittleBitLoader/LittleBitLoader.entitlements";
 				ENABLE_TESTABILITY = YES;
 				INFOPLIST_FILE = "ios/LittleBitLoader/Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;

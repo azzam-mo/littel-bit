@@ -45,6 +45,7 @@ BRIDGE_HEADERS = [
     "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h",
 ]
 INFO_PLIST = "ios/LittleBitLoader/Info.plist"
+APP_ENTITLEMENTS = "ios/LittleBitLoader/LittleBitLoader.entitlements"
 TEST_SWIFT = ["ios/LittleBitLoaderTests/EngineSmokeTests.swift"]
 
 _counter = 0
@@ -88,7 +89,8 @@ def group(children, name):
 
 def main():
     missing = [p for p in APP_SWIFT + BRIDGE_MM + ENGINE_CPP + ENGINE_HEADERS +
-               BRIDGE_HEADERS + [INFO_PLIST] + TEST_SWIFT if not os.path.isfile(os.path.join(ROOT, p))]
+               BRIDGE_HEADERS + [INFO_PLIST, APP_ENTITLEMENTS] + TEST_SWIFT
+               if not os.path.isfile(os.path.join(ROOT, p))]
     if missing:
         print("Missing source files:", *missing, sep="\n  ")
         return 1
@@ -246,6 +248,7 @@ def main():
             *common_settings,
             "\"ARCHS[sdk=iphoneos*]\" = arm64;",
             "CODE_SIGN_STYLE = Automatic;",
+            f"CODE_SIGN_ENTITLEMENTS = {q(APP_ENTITLEMENTS)};",
             "ENABLE_TESTABILITY = YES;",
             f"INFOPLIST_FILE = {q(INFO_PLIST)};",
             "PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;",

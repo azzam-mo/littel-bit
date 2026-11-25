@@ -8,6 +8,7 @@ build-setting paths, and checks source references and Info.plist contents.
 Usage: python3 scripts/check_xcode_project.py [path/to/project.pbxproj]
 """
 import os
+import plistlib
 import re
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from validate_pbxproj import Parser, validate_file
 ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PBX = ROOT / "LittleBitLoader.xcodeproj" / "project.pbxproj"
 PLIST = ROOT / "ios" / "LittleBitLoader" / "Info.plist"
+ENTITLEMENTS = ROOT / "ios" / "LittleBitLoader" / "LittleBitLoader.entitlements"
 
 SKIP_SOURCE_TREES = {"SDKROOT", "BUILT_PRODUCTS_DIR", "DEVELOPER_DIR"}
 
@@ -145,7 +147,7 @@ def check_resolved_paths(text: str, doc: Any) -> List[str]:
         if config.get("isa") != "XCBuildConfiguration":
             continue
         settings = config.get("buildSettings", {})
-        for key in ("INFOPLIST_FILE", "SWIFT_OBJC_BRIDGING_HEADER"):
+        for key in ("INFOPLIST_FILE", "SWIFT_OBJC_BRIDGING_HEADER", "CODE_SIGN_ENTITLEMENTS"):
             value = settings.get(key)
             if not value:
                 continue
@@ -195,6 +197,7 @@ def main(pbx_path: Path = PBX) -> int:
     required_settings = [
         "IPHONEOS_DEPLOYMENT_TARGET = 16.0;",
         "CODE_SIGN_STYLE = Automatic;",
+        "CODE_SIGN_ENTITLEMENTS = \"ios/LittleBitLoader/LittleBitLoader.entitlements\";",
         "SWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h\";",
         "CLANG_CXX_LANGUAGE_STANDARD = \"c++17\";",
         "\"ARCHS[sdk=iphoneos*]\" = arm64;",
@@ -217,6 +220,15 @@ def main(pbx_path: Path = PBX) -> int:
     if "arm64" not in plist_text:
         failures.append("Info.plist does not require arm64")
 
+    try:
+        entitlements = plistlib.loads(ENTITLEMENTS.read_bytes())
+    except (OSError, ValueError) as exc:
+        failures.append(f"invalid app entitlements plist {ENTITLEMENTS}: {exc}")
+    else:
+        capability = "com.apple.developer.kernel.increased-memory-limit"
+        if entitlements.get(capability) is not True:
+            failures.append(f"app entitlements missing {capability} = true")
+
     app_sources = [
         "LittleBitEngineBridge.mm", "model.cpp", "LittleBitEngine.swift",
         "binary_packer.cpp", "binary_packer_neon.cpp", "scalar_kernels.cpp",
@@ -233,7 +245,7 @@ def main(pbx_path: Path = PBX) -> int:
         for failure in failures:
             print(" -", failure)
         return 1
-    print("[xcode] PASS: structure, resolved paths, sources, deployment target and bridging header")
+    print("[xcode] PASS: structure, resolved paths, sources, deployment target, bridging header and entitlements")
     print("[xcode] NOTE: signing/build/test still require macOS, Xcode and a device")
     return 0
 
