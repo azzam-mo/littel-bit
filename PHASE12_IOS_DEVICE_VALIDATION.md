@@ -18,7 +18,7 @@
 | Phase 11 مدمجة في `dev` | CONFIRMED — `fa9b319` يحتوي `28348b1` |
 | جاهزية المشروع هيكليًا للتوقيع/Build | PASS جزئيًا — المشروع سليم، الـ entitlement موجود وموصول، لكن Team ID/profile غير متاحين محليًا |
 | macOS CI بعد Phase 11 | PASS حسب تقرير المستخدم: build rc=0، XCTest 8/8، NEON مثبت |
-| macOS CI بعد تعديلات Phase 12 | UNVERIFIED — التعديلات لم تُرسل بعد إلى CI |
+| macOS CI بعد تعديلات Phase 12 | UNVERIFIED — لا توجد نتيجة فعلية؛ الـ triggers أُصلحت وستُشغّل بعد push |
 | IPA قابل للتثبيت من GitHub Actions | BLOCKED — الوظيفة الحالية تنتج IPA **غير موقّع** وغير قابل للتثبيت |
 | iPhone حقيقي / Apple account / provisioning profile | BLOCKED — غير متاح محليًا |
 | اختبارات الجهاز الحقيقي T01–T10 | BLOCKED — لم تُنفذ، ولا توجد نتائج مختلقة |
@@ -360,6 +360,10 @@ docs/phase12/DEVICE_TEST_LOG.md
 | حذف نموذج محمّل قبل إغلاق mmap | `deleteModel` كان يستدعي `unloadModel()` ثم يحذف فورًا | `LittleBitEngine.unloadModel(completion:)` + حذف داخل الـ completion |
 | استبدال نموذج محمّل أثناء mmap | `importModelFolder` كان يحذف الهدف قبل نسخ الجديد | نسخ إلى staging فورًا، ثم استبدال بعد unload completion |
 | فحص توافق خاطئ | `littlebit_config.json` كان `false` رغم أنه مطلوب في `src/model.cpp` | جعله مطلوبًا |
+| Ghaffar / مراجعة ثانية: إيقاف security scope القديم قبل قبول التحميل الجديد | `loadModel` كان يوقف الـ scope القديم قبل أن يقرر الـ bridge قبول العملية؛ عند الرفض يبقى النموذج القديم محمّلاً بـ scope متوقف | بدء scope جديد بدون لمس الحالة المخزنة، واعتماد الجديد فقط بعد نجاح التحميل |
+| رفض التحميل أثناء التوليد كان يفرض `.error` في الـ UI | الـ bridge يرفض بأمان بينما `state` ما زالت `.generating` | تعيين حالة الـ UI من `bridge.state` الفعلي بدل `.error` الثابت |
+| `verifyModelDirectory` أضعف من عقد المحرك | كان يتحقق من ملفين فقط | أُضيف فحص `littlebit_config.json` والـ tokenizer ورفض الـ checkpoint المجزأ |
+| CI لم يكن سيعمل على فرع Phase 12 | `ios-ci.yml` كان يعمل فقط على `phase11-**` | أُضيفت `phase12-**` لكل workflows، و`dev` كأساس PR |
 |Tokenizer rule غير مطابق للمحرك | المحرك يقبل `tokenizer.json` أو `vocab.json+merges.txt` | الواجهة تطبق نفس القاعدة |
 
 لم تُغيّر هذه الإصلاحات API أو مزودي النماذج أو المفاتيح.
@@ -377,9 +381,10 @@ docs/phase12/DEVICE_TEST_LOG.md
 | Validator fixtures | 2/2 OK |
 | Xcode path fixtures | 4/4 OK |
 | YAML `safe_load` | OK |
-| كل `run:` blocks | 11/11 `bash -n` OK |
+| كل `run:` blocks | 29/29 `bash -n` OK (بعد إضافة triggers لكل الـ workflows) |
 | x86 Release build | OK |
 | x86 CTest | 8/8 |
+| Linux CI-equivalent IPA mock (`package_ipa.sh` + `unzip -l`) | OK |
 | `git diff --check` | clean |
 
 ### macOS CI
@@ -416,5 +421,114 @@ docs/phase12/DEVICE_TEST_LOG.md
 - المستودع جاهز هيكليًا للتوقيع، لكن الهوية والـ profile غير متاحين.
 - CI الحالي ينتج IPA غير قابل للتثبيت فقط.
 - خطة الجهاز واختباراته موثقة ومسجّلة كـ BLOCKED.
-- أُصلحت أربع مشكلات قابلة للإثبات من الكود.
+- أُصلحت مشكلات قابلة للإثبات من الكود (انظر القسم 17).
 - Phase 13 لم تبدأ.
+
+---
+
+## 17. مراجعة الكوميتين `00875ea` و`4230e7a`
+
+### 17.1 النتيجة
+
+| الكوميت | المراجعة |
+|---|---|
+| `00875ea` | تغييرات حقيقية في 3 ملفات: CI summary، `LittleBitEngine.swift`، `ModelManagerView.swift`. لا حذف لملفات سابقة، ولا تغيير API/مزودي النماذج/مفاتيح. الإصلاحات الأصلية (تأجيل unload، staging، فحص التوافق) سليمة لكنها غير كافية وحدها. |
+| `4230e7a` | توثيق فقط: التقرير + سجل الجهاز + مثال ExportOptions. كل اختبارات الجهاز مسجّلة `BLOCKED`، وهذا صحيح. لا نتائج مختلقة. |
+
+### 17.2 مشكلات اكتُشفت أثناء المراجعة الثانية وأُصلحت
+
+| # | المشكلة | الخطورة | الإصلاح |
+|---|---|---|---|
+| R1 | import/delete كانا ينتظران `currentModelPath` فقط؛ أثناء `loading` تكون المسار `nil` أو قديماً بينما C++ يقرأ المجلد | P0 | كل عمليات delete/replace تمرّ الآن عبر `engine.unloadModel(completion:)` بشكل غير مشروط |
+| R2 | تحميل نموذج آخر في نفس كائن `Qwen3Model` يترك مؤشرات mmap معلّقة في الملف القديم | P0 | تصفير `embed_tokens_mmap`/`lm_head_mmap` في بداية `load()` وعند الفشل |
+| R3 | تحقّق غير كافٍ من `embed_tokens.weight`/`lm_head.weight` (dtype/shape/bytes) | P0 | فحص BF16 + أبعاد `vocab×hidden` + حجم بايت كافٍ قبل تعيين المؤشرات، ورفض التحميل عند عدم التطابق |
+| R4 | الـ security scope القديم كان يُوقف قبل قبول التحميل الجديد | P1 | بدء scope جديد محلياً واعتماده فقط بعد نجاح التحميل؛ الإخفاق/الرفض يوقف scope الجديد ويحتفظ بالقديم |
+| R5 | رفض التحميل أثناء التوليد كان يفرض `.error` بينما المحرك ما زال يعمل | P1 | حالة الـ UI تُشتق من `bridge.state` الفعلي |
+| R6 | `verifyModelDirectory:` كان أضعف من عقد المحرك؛ الواجهة لا تستخدمه | P1 | توسيعه ليشمل `littlebit_config.json` والـ tokenizer ورفض الـ checkpoint المجزأ، وجعل الواجهة تستخدمه |
+| R7 | استدعاء `loadModel` من داخل unload completion كان مرفوضاً دائماً | P1 | تحرير الـ gate قبل callbacks مع علم يمنع `finishBusyOperation` من إلغاء قفل عملية بدأت داخل callback |
+| R8 | `stopGeneration()` كان يعلن `.ready` قبل انتهاء العملية، ورفض التوليد كان يكتب مقاييس صفرية | P1 | إضافة `accepted` إلى `EnginePerformanceMetrics`؛ الحالة تُحدَّث من completion فقط، ورسائل الـ token تُستهدف بالـ id لا بالـ index |
+| R9 | CI لا يعمل إطلاقاً على فرع `phase12-**` | P1 | إضافة `phase12-**` لكل الـ workflows و`dev` كأساس PR |
+
+لم تُغيّر هذه الإصلاحات API أو مزودي النماذج أو مفاتيحهم.
+
+---
+
+## 18. اختبارات regression الجديدة
+
+### 18.1 C++/Linux — تعمل فعلياً هنا
+
+`tests/test_model_inference.cpp` يضيف الآن:
+
+- رفض checkpoint معدّل `[1,1]` لـ `lm_head.weight` مع تأكيد أن المؤشرات `nullptr`.
+- فشل تحميل بعد تحميل ناجح، مع تأكيد عدم بقاء مؤشرات mmap قديمة.
+- نجاح تحميل checkpoint بدون `lm_head.weight` مع `lm_head_mmap == nullptr` (لا مؤشر معلّق).
+
+النتيجة الفعلية: `test_model_inference` PASS داخل CTest 8/8، والسطر المطبوع:
+
+```text
+✓ invalid/optional mmap tensors are rejected without dangling pointers
+```
+
+### 18.2 XCTest — كود مُضاف، لم يُنفَّذ محلياً
+
+أُضيفت هذه الاختبارات إلى `ios/LittleBitLoaderTests/EngineSmokeTests.swift`؛ كلها تتطلب Xcode واختبارات iOS، لذلك حالتها **CODE ADDED — NOT EXECUTED**:
+
+| الاختبار | ما يغطيه |
+|---|---|
+| `testVerifyModelDirectoryMatchesEngineContract` | أكواد 101–105 وطرق الـ tokenizer المقبولة ورفض الـ sharded checkpoint |
+| `testModelManagerCompatibilityMatchesEngineContract` | واجهة الاستيراد تستخدم نفس عقد المحرك |
+| `testLoadRejectedWhileGenerationInFlight` | الرفض لا يكسر الـ gate ولا يفرض `.error` |
+| `testLoadFromUnloadCompletionIsAccepted` | إعادة التحميل من unload completion تنجح (R7) |
+| `testRejectedGenerationReportsAcceptedFalse` | `metrics.accepted == false` عند الرفض (R8) |
+| `testEngineUnloadCompletionRunsAfterBridgeTeardown` | استكمال الـ engine بعد teardown الفعلي |
+
+الاختبارات الأصلية A/B/C ما زالت محفوظة ولم تُحذف.
+
+---
+
+## 19. حالة CI الفعلية
+
+- `gh auth status`: **not logged in**.
+- `GET https://api.github.com/repos/azzam-mo/littel-bit`: **404** (غير متاح عبر هذه البيئة).
+- لذلك: **لا توجد نتيجة GitHub Actions فعلية لهذا الفرع**. لا يُدعى نجاح CI.
+
+ما تم إثباته محلياً فقط:
+
+| الفحص | النتيجة |
+|---|---|
+| YAML `safe_load` لكل workflows | OK |
+| `bash -n` لكل `run:` blocks | 29/29 OK |
+| pbxproj validator | OK |
+| `check_xcode_project.py` | PASS |
+| validator fixtures | 2/2 |
+| Xcode path fixtures | 4/4 |
+| x86 Release build | OK |
+| x86 CTest | 8/8 |
+| Linux CI-equivalent IPA mock | OK |
+| `git diff --check` | clean |
+
+بعد push فقط سيصبح بإمكان `phase12-**` تشغيل `ios-ci.yml`، `ci.yml`، و`arm64-neon.yml`.
+
+---
+
+## 20. مخاطر متبقية
+
+| الخطر | الحالة |
+|---|---|
+| iPhone حقيقي / توقيع / provisioning | BLOCKED — لم يتغير |
+| نتائج XCTest بعد تعديلات Phase 12 | UNKNOWN — لم تُشغّل على macOS |
+| فحص توافق المجلد يفحص وجود الملفات فقط، لا صحة المحتوى الداخلي لـ `littlebit_config.json` | مقبول؛ المحرك نفسه هو الحكم النهائي عند Load |
+| استيراد مجلدين بنفس الاسم بالتوازي قد يتنافس على مجلد الوجهة | لم يُعالج؛ لا يوجد دليل على حدوثه في الاستخدام الحالي، ويُسجّل كخطر منخفض |
+| Jetsam/TTFT/جلسات طويلة | BLOCKED — تتطلب جهازاً |
+| إمكانية entitlement على Apple ID مجاني | UNKNOWN |
+
+---
+
+## 21. ما الذي يتطلب iPhone حقيقياً
+
+كل ما في `docs/phase12/DEVICE_TEST_LOG.md` (T01–T10)، إضافة إلى:
+
+- تشغيل الـ XCTests الجديدة على Xcode 16.
+- تثبيت IPA موقعّع فعلياً.
+- قياس الذاكرة/Jetsam وTTFT/Prefill/Decode.
+- اختبار Files + security scope على جهاز، وليس محاكياً.

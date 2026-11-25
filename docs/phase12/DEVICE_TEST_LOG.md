@@ -86,3 +86,18 @@
 - Expected: app launches on iPhone with correct bundle ID and entitlement.
 - Evidence required: exported IPA name/checksum + installed app screen + entitlement dump.
 - Actual result: not executed.
+
+## Phase 12 follow-up regressions (code added, not executed here)
+
+These are Xcode/iOS tests added during the second review pass. They are **not** real-device results and must not be marked PASS without an actual `xcodebuild test` run.
+
+| ID | Test | Status |
+|---|---|---|
+| P12-R01 | `testVerifyModelDirectoryMatchesEngineContract` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+| P12-R02 | `testModelManagerCompatibilityMatchesEngineContract` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+| P12-R03 | `testLoadRejectedWhileGenerationInFlight` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+| P12-R04 | `testLoadFromUnloadCompletionIsAccepted` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+| P12-R05 | `testRejectedGenerationReportsAcceptedFalse` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+| P12-R06 | `testEngineUnloadCompletionRunsAfterBridgeTeardown` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+
+Linux regression for the same mmap-lifetime class (`test_model_inference.cpp`: bad `lm_head` shape, failed reload, optional head tensor) **is executed** and passes as part of CTest 8/8.
