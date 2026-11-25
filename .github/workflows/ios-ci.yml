@@ -217,6 +217,14 @@ jobs:
               env.write(f"DESTINATION={destination}\n")
           PY
 
+      - name: Generate tiny model fixture for lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Synthetic fixture from tests/make_tiny_model.py only; never a real model.
+          python3 tests/make_tiny_model.py "$RUNNER_TEMP/littlebit-tiny-model"
+          echo "IOS_TINY_MODEL=$RUNNER_TEMP/littlebit-tiny-model" >> "$GITHUB_ENV"
+
       - name: Build for testing
         shell: bash
         run: |
@@ -305,6 +313,7 @@ jobs:
           set -uo pipefail
           rm -rf "$IOS_RESULT_BUNDLE"
           set +e
+          TEST_RUNNER_LITTLEBIT_TINY_MODEL="$IOS_TINY_MODEL" \
           xcodebuild test-without-building \
             -project LittleBitLoader.xcodeproj \
             -scheme LittleBitLoader \
@@ -354,6 +363,34 @@ jobs:
             grep -E 'Executed [0-9]+ tests?, with [0-9]+ failures?' "$IOS_BUILD_LOG" || true
           } > "$raw_summary"
           echo "XCTEST_RAW_SUMMARY=$raw_summary" >> "$GITHUB_ENV"
+
+          unload_results="$RUNNER_TEMP/unload-test-results.txt"
+          python3 - "$IOS_BUILD_LOG" "$GITHUB_ENV" "$unload_results" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          log_path, env_path, out_path = sys.argv[1:4]
+          pattern = re.compile(r"EngineSmokeTests (testUnload\w+)\]' (passed|failed|skipped)")
+          counts = {"passed": 0, "failed": 0, "skipped": 0}
+          names = {}
+          try:
+              text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+              for name, status in pattern.findall(text):
+                  counts[status] += 1
+                  names[name] = status
+          except OSError:
+              pass
+          if names:
+              result = ", ".join(f"{counts[k]} {k}" for k in ("passed", "failed", "skipped"))
+              result += " (" + ", ".join(sorted(names)) + ")"
+          else:
+              result = "not reported (no matching test log lines)"
+          Path(out_path).write_text(result + "\n", encoding="utf-8")
+          with open(env_path, "a", encoding="utf-8") as env:
+              env.write(f"UNLOAD_TEST_RESULTS={result}\n")
+          print("Unload lifecycle tests:", result)
+          PY
 
           python3 - "$summary_json" "$GITHUB_ENV" "$IOS_BUILD_LOG" "$raw_summary" <<'PY'
           import json
@@ -583,6 +620,9 @@ jobs:
                   f"skipped {env.get('TEST_SKIPPED', 'unknown')} "
                   f"(source: {env.get('TEST_COUNT_SOURCE', 'unknown')})"
               )
+          lines.append(
+              f"- Unload lifecycle tests: {env.get('UNLOAD_TEST_RESULTS', 'not reported')}"
+          )
           lines.extend([
               f"- Build rc: {env.get('BUILD_RC', 'not-run')}; test rc: {env.get('TEST_RC', 'not-run')}",
               f"- NEON kernel compiled in app target: {neon_status}",
@@ -607,6 +647,7 @@ jobs:
             ${{ runner.temp }}/LittleBitTests.xcresult
             ${{ runner.temp }}/xcresult_summary.json
             ${{ runner.temp }}/xctest-summary.txt
+            ${{ runner.temp }}/unload-test-results.txt
           if-no-files-found: warn
           retention-days: 7
 
