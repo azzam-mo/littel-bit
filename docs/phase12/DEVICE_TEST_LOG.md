@@ -7,13 +7,15 @@
 | Item | Required | Local status | Evidence needed on device run |
 |---|---|---|---|
 | macOS + Xcode 16.x | Yes | NOT AVAILABLE locally | `xcodebuild -version` output |
-| Apple Developer account / Team ID | Yes | NOT AVAILABLE locally | Team ID used for signing |
-| Registered iPhone UDID | Yes | NOT AVAILABLE locally | Device list / identifier |
-| Development certificate | Yes | NOT AVAILABLE locally | Certificate common name |
-| Development profile for `com.littlebit.loader` | Yes | NOT AVAILABLE locally | Profile name + entitlements dump |
-| `com.apple.developer.kernel.increased-memory-limit` in profile | Yes for real-device validation | UNKNOWN | Provisioning profile entitlement dump |
+| iPhone (real device) | Yes | NOT AVAILABLE locally | Device model + iOS version |
+| Signing path A: Apple Developer Team ID + certificate + profile | One of A or B | NOT AVAILABLE locally | Team ID + profile name + entitlement dump |
+| Signing path B: AltStore Classic + AltServer + free Apple ID | One of A or B | NOT AVAILABLE locally | AltStore version + account type screen; credentials stay on user's Mac only |
+| Bundle ID `com.littlebit.loader` in built app | Yes | VERIFIED statically in `Info.plist`/generator | `plutil` on installed app |
+| arm64 device binary / no x86_64 | Yes | VERIFIED statically in generator; script check added, not executed on macOS | `lipo -archs` output from build |
+| `com.apple.developer.kernel.increased-memory-limit` in generated profile | Yes for increased-memory validation | UNKNOWN | Entitlement dump from installed app + profile |
+| AltStore-source IPA with ad-hoc entitlement carrier | For path B | CODE ADDED — NOT EXECUTED (no macOS) | Script output + SHA-256 + readback plist |
 | Converted LittleBit model directory | Yes | NOT COMMITTED / NOT AVAILABLE locally | Directory listing + checksums |
-| IPA installed on iPhone | Yes | NOT AVAILABLE locally | Installed app version screen |
+| IPA installed and launched on iPhone | Yes | NOT AVAILABLE locally | Installed app version screen + launch screenshot |
 
 ## Test records
 
@@ -80,11 +82,18 @@
 - Evidence required: long-run log + memory samples.
 - Actual result: not executed.
 
-### P12-T10 — Signed IPA install
+### P12-T10 — Signed IPA install (Xcode/Developer path)
 - Status: `BLOCKED`
 - Command/action: archive, export with `docs/phase12/ExportOptions-device.plist.example`, install via Xcode/Configurator.
 - Expected: app launches on iPhone with correct bundle ID and entitlement.
 - Evidence required: exported IPA name/checksum + installed app screen + entitlement dump.
+- Actual result: not executed.
+
+### P12-T11 — AltStore/free Apple ID install and refresh
+- Status: `BLOCKED`
+- Command/action: build archive without Apple signing, run `scripts/package_altstore_ipa.sh`, sideload the resulting IPA with AltStore Classic, trust the developer profile, enable Developer Mode, then refresh before 7 days expire.
+- Expected: AltStore re-signs the app; app launches with `com.littlebit.loader`; entitlement blob is visible on the installed app.
+- Evidence required: AltStore version + IPA SHA-256 + installed app screen + entitlement dump + refresh timestamp. Apple ID credentials must never be recorded in the repo or this log.
 - Actual result: not executed.
 
 ## Phase 12 follow-up regressions (code added, not executed here)
@@ -101,3 +110,5 @@ These are Xcode/iOS tests added during the second review pass. They are **not** 
 | P12-R06 | `testEngineUnloadCompletionRunsAfterBridgeTeardown` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
 
 Linux regression for the same mmap-lifetime class (`test_model_inference.cpp`: bad `lm_head` shape, failed reload, optional head tensor) **is executed** and passes as part of CTest 8/8.
+
+AltStore packaging script and source JSON example are **static-check only** here: `bash -n` and JSON parse pass on Linux, but `codesign`, `plutil`, `lipo`, IPA packaging, AltServer re-signing, and device install are all `NOT EXECUTED` without macOS and an iPhone.

@@ -1,0 +1,26 @@
+{
+  "name": "LittleBit Loader",
+  "bundleIdentifier": "com.littlebit.loader",
+  "developerName": "LittleBit Loader",
+  "localizedDescription": "Phase 12 real-device validation build. Sideload with AltStore Classic and a free Apple ID.",
+  "iconURL": "https://example.invalid/littlebit-icon.png",
+  "tintColor": "#2D7FF9",
+  "category": "developer",
+  "appPermissions": {
+    "entitlements": [
+      "com.apple.developer.kernel.increased-memory-limit"
+    ],
+    "privacy": {}
+  },
+  "versions": [
+    {
+      "version": "1.0.0",
+      "buildVersion": "1",
+      "date": "2026-11-25",
+      "downloadURL": "https://example.invalid/LittleBitLoader-altstore-source.ipa",
+      "size": 0,
+      "sha256": "REPLACE_WITH_SHA256_FROM_PACKAGE_SCRIPT",
+      "minOSVersion": "16.0"
+    }
+  ]
+}

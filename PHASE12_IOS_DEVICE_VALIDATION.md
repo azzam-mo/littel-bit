@@ -19,9 +19,10 @@
 | جاهزية المشروع هيكليًا للتوقيع/Build | PASS جزئيًا — المشروع سليم، الـ entitlement موجود وموصول، لكن Team ID/profile غير متاحين محليًا |
 | macOS CI بعد Phase 11 | PASS حسب تقرير المستخدم: build rc=0، XCTest 8/8، NEON مثبت |
 | macOS CI بعد تعديلات Phase 12 | UNVERIFIED — لا توجد نتيجة فعلية؛ الـ triggers أُصلحت وستُشغّل بعد push |
-| IPA قابل للتثبيت من GitHub Actions | BLOCKED — الوظيفة الحالية تنتج IPA **غير موقّع** وغير قابل للتثبيت |
+| IPA Source لـ AltStore/free Apple ID | PREPARED (code/docs only) — الأداة تضيف توقيع ad-hoc كحامل للـ entitlement؛ لم تُشغّل على macOS ولم تُثبّت |
+| IPA قابل للتثبيت من GitHub Actions | BLOCKED — الـ artifact ليس قابلاً للتثبيت؛ AltStore/AltServer يعيد التوقيع بحساب المستخدم |
 | iPhone حقيقي / Apple account / provisioning profile | BLOCKED — غير متاح محليًا |
-| اختبارات الجهاز الحقيقي T01–T10 | BLOCKED — لم تُنفذ، ولا توجد نتائج مختلقة |
+| اختبارات الجهاز الحقيقي T01–T11 | BLOCKED — لم تُنفذ، ولا توجد نتائج مختلقة |
 | Phase 13 | لم تبدأ |
 
 ---
@@ -119,30 +120,40 @@ system_profiler: NOT FOUND
    - تنتج summary وتحقق من NEON.
    - لا توقع تطبيقًا.
 
-2. `unsigned-ipa-optional`
+2. `unsigned-ipa-optional` (اسم العرض الآن: `Optional AltStore-source IPA`)
    - تعمل فقط عبر `workflow_dispatch`.
    - تستخدم `CODE_SIGNING_ALLOWED=NO`, `CODE_SIGNING_REQUIRED=NO`, `CODE_SIGN_IDENTITY=""`.
-   - تنتج أرشيفًا ثم تضع `Payload/LittleBitLoader.app` داخل IPA.
-   - السطر الصريح في الـ workflow يقول:
-     ```text
-     NOTE: this artifact is unsigned and is not installable on a device.
-     ```
+   - تستدعي `scripts/package_altstore_ipa.sh` بدل ضغط الـ `.app` مباشرة.
+   - Script يضيف **توقيع ad-hoc** حاملًا للـ `ios/LittleBitLoader/LittleBitLoader.entitlements`، ثم يتحقق من:
+     - `CFBundleIdentifier == com.littlebit.loader`،
+     - `MinimumOSVersion == 16.0`،
+     - `UIFileSharingEnabled == true` و`LSSupportsOpeningDocumentsInPlace == true`،
+     - وجود شريحة `arm64` وعدم وجود `x86_64`،
+     - ظهور `com.apple.developer.kernel.increased-memory-limit` في الـ entitlement blob،
+     - SHA-256 للـ IPA الناتج.
+   - الاسم الجديد للـ artifact: `ios-altstore-source-ipa-optional` / `LittleBitLoader-altstore-source.ipa`.
 
 ### 5.2 الحكم
 
-- هذه الـ IPA **غير قابلة للتثبيت على iPhone**.
-- لا يمكن اعتبارها دليلًا على جاهزية النشر أو التوقيع.
-- لم تُضف وظيفة توقيع في CI لأن ذلك يتطلب حساب Apple/sharing secrets/profile، وهذا غير متاح، ولا يجوز افتراضه.
+- هذا الـ artifact **ليس قابلاً للتثبيت على iPhone** كما هو.
+- التوقيع ad-hoc هنا **حامل بيانات فقط**؛ ليس توقيع Apple صالحًا ولا إثباتًا على تثبيت أو تشغيل.
+- AltStore Classic يعيد توقيع الـ IPA ب_free Apple ID_ عبر AltStore/AltServer؛ هذا هو المسار المعدّ في القسم 22.
+- لا توجد شهادات أو كلمات سر أو مفاتيح خاصة في المستودع أو في الـ workflow.
+- لم تُضف وظيفة توقيع Apple في CI لأن ذلك يتطلب حساب Apple/secrets/profile، وهذا غير متاح، ولا يجوز افتراضه.
 
-### 5.3 المسار الصحيح لإنتاج IPA قابل للتثبيت
+### 5.3 المسار البديل بحساب مطور مدفوع
 
-موضح بالكامل في القسم 6، ويستخدم `docs/phase12/ExportOptions-device.plist.example`.
+موضح في القسم 7 ويستخدم `docs/phase12/ExportOptions-device.plist.example`. هذا مسار مختلف عن AltStore/free Apple ID ولا يُستنتج منه أي نتيجة على الجهاز.
 
 ---
 
-## 6. متطلبات Apple Developer وProvisioning
+## 6. متطلبات التوقيع وProvisioning
 
-يلزم الآتي قبل أي اختبار جهاز حقيقي:
+هناك مساران منفصلان؛ لا يُخلط بينهما:
+
+### 6.1 المسار A — Apple Developer / Xcode Personal Team
+
+يلزم الآتي قبل أي اختبار جهاز حقيقي عبر هذا المسار:
 
 1. حساب Apple Developer مع Team ID معروف.
 2. iPhone مسجّل بـ UDID داخل حساب المطور.
@@ -157,10 +168,18 @@ system_profiler: NOT FOUND
 7. Xcode 16.x على macOS.
 8. نموذج LittleBit محوّل بالكامل، غير مخزن في المستودع.
 
+### 6.2 المسار B — AltStore Classic بحساب Apple مجاني
+
+- AltServer يطلب بيانات Apple ID من المستخدم محليًا على جهازه، وينشئ App ID/certificate/profile الخاصة به؛ لا توجد حاجة إلى `TEAM_ID` أو certificate أو profile في المستودع.
+- الـ IPA الناتج من القسم 5 يُعاد توقيعه أثناء التثبيت/التجديد؛ انتهاء التطبيقات بعد 7 days، وحد أقصى 3 تطبيقات نشطة، و10 App IDs لكل 7 days حسب توثيق AltStore.
+- AltStore 2.2 أعلن دعم sideload للتطبيقات التي تحمل `increased-memory-limit`؛ AltStore 2.3 رفع الحد الأدنى لنظام iOS إلى 17.4. هذا **دعم مُعلن** وليس نتيجة على حسابنا/جهازنا.
+- يجب فحص الـ entitlement داخل الـ provisioning profile الذي يولّده AltStore بعد التثبيت؛ وجود المفتاح في ملف المشروع أو في توقيع ad-hoc لا يكفي.
+
 غير معروف محليًا:
 
-- هل يقبل provisioning profile مجاني الـ `increased-memory-limit`؟
-- هل الـ capability نفسها تحتاج موافقة إضافية من Apple لهذا الحساب؟
+- هل سيمنح حساب Apple المستخدم الـ `increased-memory-limit` فعليًا؟
+- هل سيُبقي AltStore/AltServer المفتاح في الـ profile الناتج على هذا الجهاز وهذا الإصدار؟
+- هل سيُطبّق iOS الـ memory limit الأعلى على طراز الجهاز المتاح؟
 
 لذلك يُسجّل هذا البند كـ `UNKNOWN` وليس كـ `PASS`.
 
@@ -224,6 +243,63 @@ xcodebuild -exportArchive \
 - Bundle ID: `com.littlebit.loader`
 - App launches
 - Entitlement dump يُظهر `com.apple.developer.kernel.increased-memory-limit`
+
+### 7.5 مسار AltStore/free Apple ID (بدون أسرار في المستودع)
+
+من macOS مع Xcode وAltServer مثبتين:
+
+```bash
+cd /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader
+
+# 1) فحص المشروع المولّد كما هو؛ لا TEAM_ID ولا كلمة سر هنا.
+python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
+python3 scripts/check_xcode_project.py
+
+# 2) أرشيف بدون توقيع Apple.
+xcodebuild archive \
+  -project LittleBitLoader.xcodeproj \
+  -scheme LittleBitLoader \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath "$HOME/LittleBitLoader-altstore.xcarchive" \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY="" \
+  PROVISIONING_PROFILE_SPECIFIER=""
+
+# 3) حزم IPA حامل للـ entitlement عبر توقيع ad-hoc محلي.
+scripts/package_altstore_ipa.sh \
+  "$HOME/LittleBitLoader-altstore.xcarchive/Products/Applications/LittleBitLoader.app" \
+  "$HOME/LittleBitLoader-altstore-source.ipa"
+```
+
+النتيجة المتوقعة من Script (لم تُنفذ محليًا لغياب macOS):
+
+```text
+AltStore-source IPA: .../LittleBitLoader-altstore-source.ipa
+SHA-256: <printed>
+Architectures: arm64
+Verified from built app: CFBundleIdentifier=com.littlebit.loader, MinimumOSVersion=16.0
+Verified entitlement blob: com.apple.developer.kernel.increased-memory-limit=true
+NOTE: ad-hoc signature is NOT installable by iOS. AltStore/AltServer must re-sign with a free Apple ID.
+```
+
+ثم على iPhone:
+
+1. ثبّت AltStore Classic وAltServer حسب دليل AltStore، وسجّل الدخول بحساب Apple مجاني داخل AltServer فقط.
+2. افتح AltStore → My Apps → أضف الـ IPA من Files أو من source خاص؛ لا تُخزّن بيانات الحساب في المستودع.
+3. وافق على الصلاحيات المعروضة، وانتظر إعادة التوقيع والتثبيت.
+4. افتح Settings → General → VPN & Device Management وثقّ بحساب التطوير، وفعّل Developer Mode على iOS 16+.
+5. تحقّق من الـ entitlement داخل التطبيق المثبّت، ثم نفّذ `docs/phase12/DEVICE_TEST_LOG.md`.
+6. جدّد التطبيق قبل انتهاء 7 days؛ لا تعتبر التثبيت نجاحًا إلا برؤية التطبيق يعمل على الجهاز.
+
+قالب source اختياري موجود في:
+
+```text
+docs/phase12/AltStore-source.example.json
+```
+
+استبدل `REPLACE_WITH_SHA256_FROM_PACKAGE_SCRIPT` و`size` و`downloadURL` بالقيم الفعلية قبل استخدامه. الـ `appPermissions.entitlements` فيه يعلن صراحةً `com.apple.developer.kernel.increased-memory-limit`، وهذا مطلوب ليطابق AltStore بين الصلاحيات المعلنة والـ IPA.
 
 ---
 
@@ -385,6 +461,9 @@ docs/phase12/DEVICE_TEST_LOG.md
 | x86 Release build | OK |
 | x86 CTest | 8/8 |
 | Linux CI-equivalent IPA mock (`package_ipa.sh` + `unzip -l`) | OK |
+| `bash -n scripts/package_altstore_ipa.sh` | OK (Script نفسه لم يُنفَّذ؛ يتطلب macOS) |
+| `python3 -m json.tool docs/phase12/AltStore-source.example.json` | OK |
+| Workflow trigger audit (كل `.yml`) | push/PR تشمل `phase12-**` |
 | `git diff --check` | clean |
 
 ### macOS CI
@@ -402,14 +481,14 @@ docs/phase12/DEVICE_TEST_LOG.md
 
 لتشغيل Phase 12 فعليًا على جهاز حقيقي يلزم:
 
-1. macOS مع Xcode 16.x.
-2. iPhone مسجّل.
-3. Apple Developer Team ID.
-4. شهادة تطوير + provisioning profile لـ `com.littlebit.loader`.
-5. تأكيد دعم/إمكانية entitlement `increased-memory-limit` في الحساب.
-6. IPA موقعّع/installable.
-7. مجلد نموذج LittleBit محوّل بالكامل.
-8. تنفيذ `docs/phase12/DEVICE_TEST_LOG.md` وتعبئة النتائج الفعلية.
+1. macOS مع Xcode 16.x وiPhone حقيقي.
+2. أحد مسارَي التوقيع:
+   - Apple Developer: Team ID + شهادة + provisioning profile لـ `com.littlebit.loader`، أو
+   - AltStore Classic: AltServer + حساب Apple مجاني يُدخل فقط على جهاز المستخدم.
+3. IPA أُعيد توقيعه فعليًا وثبّت على الجهاز (توقيع ad-hoc وحده لا يكفي).
+4. تأكيد دعم/إمكانية entitlement `increased-memory-limit` في الـ provisioning profile الناتج.
+5. مجلد نموذج LittleBit محوّل بالكامل.
+6. تنفيذ `docs/phase12/DEVICE_TEST_LOG.md` وتعبئة النتائج الفعلية.
 
 ---
 
@@ -419,7 +498,8 @@ docs/phase12/DEVICE_TEST_LOG.md
 
 - Phase 11 مؤكدة داخل `dev`.
 - المستودع جاهز هيكليًا للتوقيع، لكن الهوية والـ profile غير متاحين.
-- CI الحالي ينتج IPA غير قابل للتثبيت فقط.
+- أُضيف مسار AltStore/free Apple ID قابل لإعادة الإنتاج، بتوقيع ad-hoc كحامل للـ entitlement فقط، وبدون أي أسرار في المستودع.
+- الـ artifact الحالي **ليس قابلاً للتثبيت**؛ إعادة التوقيع والتثبيت عبر AltStore لم تحدث هنا.
 - خطة الجهاز واختباراته موثقة ومسجّلة كـ BLOCKED.
 - أُصلحت مشكلات قابلة للإثبات من الكود (انظر القسم 17).
 - Phase 13 لم تبدأ.
@@ -505,9 +585,12 @@ docs/phase12/DEVICE_TEST_LOG.md
 | x86 Release build | OK |
 | x86 CTest | 8/8 |
 | Linux CI-equivalent IPA mock | OK |
+| `bash -n scripts/package_altstore_ipa.sh` | OK (لم يُنفَّذ؛ macOS only) |
+| AltStore source JSON parse | OK |
+| Workflow trigger audit | `phase12-**` موجود في push وPR لكل الـ workflows |
 | `git diff --check` | clean |
 
-بعد push فقط سيصبح بإمكان `phase12-**` تشغيل `ios-ci.yml`، `ci.yml`، و`arm64-neon.yml`.
+بعد push فقط سيصبح بإمكان `phase12-**` تشغيل `ios-ci.yml`، `ci.yml`، و`arm64-neon.yml`. لا توجد نتيجة تشغيل فعلية من هذه البيئة.
 
 ---
 
@@ -520,15 +603,51 @@ docs/phase12/DEVICE_TEST_LOG.md
 | فحص توافق المجلد يفحص وجود الملفات فقط، لا صحة المحتوى الداخلي لـ `littlebit_config.json` | مقبول؛ المحرك نفسه هو الحكم النهائي عند Load |
 | استيراد مجلدين بنفس الاسم بالتوازي قد يتنافس على مجلد الوجهة | لم يُعالج؛ لا يوجد دليل على حدوثه في الاستخدام الحالي، ويُسجّل كخطر منخفض |
 | Jetsam/TTFT/جلسات طويلة | BLOCKED — تتطلب جهازاً |
-| إمكانية entitlement على Apple ID مجاني | UNKNOWN |
+| إمكانية entitlement على Apple ID مجاني | UNKNOWN — AltStore 2.2+ يعلن الدعم، ويوجد تقرير مجتمع بـ AltStore 2.3، لكن profile الجهاز لم يُفحص هنا |
+| توقيع ad-hoc كحامل للـ entitlement | UNKNOWN — لم يُنفَّذ على macOS؛ وليس توقيع Apple ولا إثبات تثبيت |
 
 ---
 
 ## 21. ما الذي يتطلب iPhone حقيقياً
 
-كل ما في `docs/phase12/DEVICE_TEST_LOG.md` (T01–T10)، إضافة إلى:
+كل ما في `docs/phase12/DEVICE_TEST_LOG.md` (T01–T11)، إضافة إلى:
 
 - تشغيل الـ XCTests الجديدة على Xcode 16.
-- تثبيت IPA موقعّع فعلياً.
+- تثبيت IPA موقعّع فعلياً (Xcode أو إعادة توقيع AltStore).
+- فحص الـ entitlement داخل التطبيق المثبّت، وتأكيد تجديد الـ 7 days.
 - قياس الذاكرة/Jetsam وTTFT/Prefill/Decode.
+
+---
+
+## 22. بحث AltStore/free Apple ID — الوقائع والحكم
+
+### 22.1 مصادر رسمية تمت مراجعتها
+
+| المصدر | الوقائع المستخرجة |
+|---|---|
+| [AltStore Classic vs PAL](https://faq.altstore.io/altstore-pal-v.-altstore-classic) | Classic يقبل أي `.ipa`، يتطلب غالبًا كمبيوترًا للتثبيت، التطبيقات تنتهي بعد 7 days، وحد 3 تطبيقات نشطة؛ PAL مختلف تمامًا وليس مسار هذه المرحلة. |
+| [AltServer](https://faq.altstore.io/altstore-classic/altserver.md) | AltServer هو الذي يعيد توقيع/تثبيت/تجديد التطبيقات؛ يجب أن يكون على نفس Wi-Fi أو USB. |
+| [Installing AltStore (macOS)](https://faq.altstore.io/altstore-classic/how-to-install-altstore-macos.md) | إدخال Apple ID يتم داخل AltServer فقط؛ Trust the developer profile ثم Developer Mode على iOS 16+. |
+| [App IDs](https://faq.altstore.io/altstore-classic/app-ids.md) و[Error Codes](https://faq.altstore.io/altstore-classic/error-codes.md) | 10 AppIDs/7 days، و3 تطبيقات نشطة بحساب مجاني، ورسائل خطأ 1009/2009/3013 عند التجاوز. |
+| [AltStore release notes](https://faq.altstore.io/release-notes/altstore.md) | الإصدار 2.2 (16 April 2026) أضاف: `Supports sideloading apps with "Increased Memory Limit" entitlement`. الإصدار 2.3 رفع الحد الأدنى لـ iOS إلى 17.4. |
+| [Make a Source](https://faq.altstore.io/developers/make-a-source.md) | مصدر AltStore يجب أن يعلن كل الـ entitlements في `appPermissions.entitlements`؛ AltStore يتحقق من تطابقها مع الـ IPA. |
+| [Apple: com.apple.developer.kernel.increased-memory-limit](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) | الـ entitlement متاح على iOS 15+، وبعض طرازات الأجهزة فقط تحصل على الحد الأعلى. |
+| [TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles) | الـ provisioning profile هو allowlist؛ يجب أن يظهر المفتاح في توقيع التطبيق **و** في الـ profile كي يطبّقه iOS. |
+
+### 22.2 حكم التوافق
+
+- **AltStore Classic + free Apple ID**: مسار معقول لإعادة توقيع IPA الذي لا يملك شهادة Apple، بشرط أن يوفر المستخدم الحساب داخل AltServer على جهازه.
+- **`com.apple.developer.kernel.increased-memory-limit`**: الدعم مُعلن رسميًا في AltStore 2.2+، وهناك تقرير مجتمع بأن AltStore 2.3 حافظ على المفتاح بحساب مجاني. لكن هذا **لا يثبت** أن الـ profile الناتج لحسابنا و جهازنا سيحتوي المفتاح، ولا أن الجهاز سيطبّق الحد الأعلى.
+- **الحالة النهائية لهذا البند**: `UNKNOWN / BLOCKED` حتى يُفحص entitlement blob داخل التطبيق المثبّت بواسطة AltStore، ويُقاس سلوك الذاكرة على iPhone فعلي.
+
+### 22.3 لماذا التوقيع ad-hoc في السكربت؟
+
+AltStore يحتاج أن يرى الصلاحيات المطلوبة قبل إعادة التوقيع. بناء IPA مع `CODE_SIGNING_ALLOWED=NO` فقط قد ينتج تطبيقًا بلا entitlement blob. لذلك يضع `scripts/package_altstore_ipa.sh` توقيع ad-hoc بمفتاح `codesign -s - --entitlements ...` ليكون المفتاح ظاهرًا في الـ IPA. هذا التوقيع:
+
+- لا يستخدم certificate أو private key أو Apple ID.
+- لا يجعل التطبيق قابلاً للتثبيت على iOS.
+- لا يُثبت أن AltStore سيقبل الـ entitlement أو يمنحه.
+- يُستخدم فقط كحامل بيانات، ثم يستبدله AltServer بتوقيعه الخاص.
+
+---
 - اختبار Files + security scope على جهاز، وليس محاكياً.

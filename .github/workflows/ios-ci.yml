@@ -7,7 +7,7 @@ on:
   push:
     branches: [ "phase11-**", "phase12-**" ]
   pull_request:
-    branches: [ "phase11-ios-ci", "dev", "main" ]
+    branches: [ "phase11-ios-ci", "phase12-**", "dev", "main" ]
   workflow_dispatch:
 
 permissions:
@@ -672,7 +672,7 @@ jobs:
           retention-days: 7
 
   unsigned-ipa-optional:
-    name: Optional unsigned IPA (workflow_dispatch only)
+    name: Optional AltStore-source IPA (workflow_dispatch only)
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 30
@@ -806,13 +806,13 @@ jobs:
           print("Generated ephemeral archive scheme")
           PY
 
-      - name: Archive without signing and package unsigned IPA
+      - name: Archive without Apple signing and package AltStore-source IPA
         shell: bash
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/LittleBitLoader.xcarchive"
-          ipa_root="$RUNNER_TEMP/unsigned-ipa"
-          rm -rf "$archive" "$ipa_root"
+          ipa="$RUNNER_TEMP/LittleBitLoader-altstore-source.ipa"
+          rm -rf "$archive" "$ipa"
           xcodebuild archive \
             -project LittleBitLoader.xcodeproj \
             -scheme LittleBitLoader \
@@ -830,22 +830,18 @@ jobs:
             echo "archived app not found at $app" >&2
             exit 1
           fi
-          mkdir -p "$ipa_root/Payload"
-          cp -R "$app" "$ipa_root/Payload/LittleBitLoader.app"
-          (
-            cd "$ipa_root"
-            ditto -c -k --sequesterRsrc --keepParent Payload "$RUNNER_TEMP/LittleBitLoader-unsigned.ipa"
-          )
-          echo "Unsigned IPA: $RUNNER_TEMP/LittleBitLoader-unsigned.ipa"
-          echo "NOTE: this artifact is unsigned and is not installable on a device."
+          ./scripts/package_altstore_ipa.sh "$app" "$ipa"
+          echo "AltStore-source IPA: $ipa"
+          echo "NOTE: ad-hoc signed only to carry the repository entitlement blob."
+          echo "It is not installable until AltStore/AltServer re-signs it with a free Apple ID."
 
-      - name: Upload unsigned IPA and archive log
+      - name: Upload AltStore-source IPA and archive log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-unsigned-ipa-optional
+          name: ios-altstore-source-ipa-optional
           path: |
-            ${{ runner.temp }}/LittleBitLoader-unsigned.ipa
+            ${{ runner.temp }}/LittleBitLoader-altstore-source.ipa
             ${{ runner.temp }}/LittleBitLoader.xcarchive
             ${{ runner.temp }}/ios-archive.log
           if-no-files-found: warn
