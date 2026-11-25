@@ -4,6 +4,8 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <dispatch/dispatch.h>
+#include <sys/qos.h>
 
 namespace {
 
@@ -155,7 +157,11 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     _cancelGeneration = false;
     _pendingUTF8.clear();
 
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_USER_INITIATED, 0), ^{
+    // Allocate in method scope so the main-queue block only captures a plain
+    // Objective-C object pointer, never a local declared inside another block.
+    EnginePerformanceMetrics* res = [[EnginePerformanceMetrics alloc] init];
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         std::string cppPrompt = [prompt UTF8String];
 
         auto cppCallback = [self, onToken](int32_t /*token_id*/, const std::string& token_str) -> bool {
@@ -183,17 +189,17 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
             cppCallback
         );
 
+        res.loadTimeMs = m.load_time_ms;
+        res.ttftMs = m.ttft_ms;
+        res.tokensPerSecond = m.tokens_per_second;
+        res.tokensGenerated = m.tokens_generated;
+        res.residentMemoryMB = m.resident_memory_mb;
+        res.kvCacheMB = m.kv_cache_mb;
+
         _busy = false;
         _pendingUTF8.clear();
         dispatch_async(dispatch_get_main_queue(), ^{
             self.state = EngineStateReady;
-            EnginePerformanceMetrics* res = [[EnginePerformanceMetrics alloc] init];
-            res.loadTimeMs = m.load_time_ms;
-            res.ttftMs = m.ttft_ms;
-            res.tokensPerSecond = m.tokens_per_second;
-            res.tokensGenerated = m.tokens_generated;
-            res.residentMemoryMB = m.resident_memory_mb;
-            res.kvCacheMB = m.kv_cache_mb;
             if (completion) completion(res);
         });
     });
