@@ -457,6 +457,12 @@ size_t Qwen3Model::get_current_rss_mb() {
 bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t num_layers_to_load) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // A failed load (or loading a different checkpoint into this object) must
+    // never leave mmap pointers into the previous file. forward_token() reads
+    // through these pointers, so they are cleared before any work begins.
+    embed_tokens_mmap = nullptr;
+    lm_head_mmap = nullptr;
+
     config.max_seq_len = max_seq_len;
 
     // 1. Load config.json
@@ -536,18 +542,46 @@ bool Qwen3Model::load(const std::string& model_dir, size_t max_seq_len, size_t n
         return false;
     }
 
-    // 4. Memory-map Embedding table
-    if (weights_file.has_tensor("model.embed_tokens.weight")) {
-        const auto& info = weights_file.get_tensor_info("model.embed_tokens.weight");
-        embed_tokens_mmap = reinterpret_cast<const uint16_t*>(info.data_ptr);
-        std::cout << "[MODEL] Memory-mapped embedding table: " << info.shape[0] << "x" << info.shape[1] << std::endl;
+    // 4/5. Memory-map the embedding table and LM head. These come from an
+    // untrusted Files.app import, so metadata must be checked before the
+    // pointers are used by forward_token()/lm_head_logits().
+    auto map_bf16_matrix = [&](const char* name, const uint16_t*& target) -> bool {
+        target = nullptr;
+        if (!weights_file.has_tensor(name)) {
+            return true; // both tensors are optional in the checkpoint format
+        }
+        const auto& info = weights_file.get_tensor_info(name);
+        const size_t expected_numel = config.vocab_size * config.hidden_size;
+        bool valid =
+            info.dtype == DType::BF16 &&
+            info.shape.size() == 2 &&
+            info.shape[0] > 0 && info.shape[1] > 0 &&
+            static_cast<size_t>(info.shape[0]) == config.vocab_size &&
+            static_cast<size_t>(info.shape[1]) == config.hidden_size &&
+            info.numel() == expected_numel &&
+            info.byte_size() >= expected_numel * sizeof(uint16_t) &&
+            info.data_ptr != nullptr;
+        if (!valid) {
+            std::cerr << "[MODEL] Error: invalid BF16 matrix metadata for " << name << std::endl;
+            return false;
+        }
+        target = reinterpret_cast<const uint16_t*>(info.data_ptr);
+        return true;
+    };
+    if (!map_bf16_matrix("model.embed_tokens.weight", embed_tokens_mmap) ||
+        !map_bf16_matrix("lm_head.weight", lm_head_mmap)) {
+        weights_file.close();
+        embed_tokens_mmap = nullptr;
+        lm_head_mmap = nullptr;
+        return false;
     }
-
-    // 5. Memory-map LM Head
-    if (weights_file.has_tensor("lm_head.weight")) {
-        const auto& info = weights_file.get_tensor_info("lm_head.weight");
-        lm_head_mmap = reinterpret_cast<const uint16_t*>(info.data_ptr);
-        std::cout << "[MODEL] Memory-mapped lm_head table: " << info.shape[0] << "x" << info.shape[1] << std::endl;
+    if (embed_tokens_mmap) {
+        std::cout << "[MODEL] Memory-mapped embedding table: "
+                  << config.vocab_size << "x" << config.hidden_size << std::endl;
+    }
+    if (lm_head_mmap) {
+        std::cout << "[MODEL] Memory-mapped lm_head table: "
+                  << config.vocab_size << "x" << config.hidden_size << std::endl;
     }
 
     // 6. Final Norm

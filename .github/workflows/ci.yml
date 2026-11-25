@@ -2,9 +2,9 @@ name: LittleBit Engine CI (Linux)
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: [ "main", "dev", "phase12-**" ]
   pull_request:
-    branches: [ "main", "dev" ]
+    branches: [ "main", "dev", "phase12-**" ]
 
 jobs:
   build-and-test:

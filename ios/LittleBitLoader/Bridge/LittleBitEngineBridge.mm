@@ -45,6 +45,10 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     std::mutex _lifecycleMutex;
     std::string _pendingUTF8;
     NSMutableArray* _pendingUnloadCompletions;
+    // Set while unload callbacks run with the gate temporarily released, so a
+    // load/generate started from a callback is not mistaken for a stale gate.
+    bool _gateReleasedForCallbacks;
+    bool _callbackStartedOperation;
 }
 @property (nonatomic, readwrite) EngineState state;
 @property (nonatomic, readwrite, nullable) NSString* currentModelPath;
@@ -75,6 +79,8 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         _busy = false;
         _pendingUnload = false;
         _pendingUnloadCompletions = [NSMutableArray array];
+        _gateReleasedForCallbacks = false;
+        _callbackStartedOperation = false;
         _model = std::make_unique<littlebit::Qwen3Model>();
     }
     return self;
@@ -98,6 +104,40 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
             *error = [NSError errorWithDomain:@"LittleBitError" 
                                          code:102 
                                      userInfo:@{NSLocalizedDescriptionKey: @"config.json is missing."}];
+        }
+        return NO;
+    }
+
+    NSString* littlebitConfig = [modelDirPath stringByAppendingPathComponent:@"littlebit_config.json"];
+    if (![fm fileExistsAtPath:littlebitConfig]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"LittleBitError"
+                                         code:103
+                                     userInfo:@{NSLocalizedDescriptionKey: @"littlebit_config.json is missing."}];
+        }
+        return NO;
+    }
+
+    // Qwen3Model::load prefers tokenizer.json and falls back to vocab+merges.
+    BOOL hasTokenizerJSON = [fm fileExistsAtPath:[modelDirPath stringByAppendingPathComponent:@"tokenizer.json"]];
+    BOOL hasVocabAndMerges =
+        [fm fileExistsAtPath:[modelDirPath stringByAppendingPathComponent:@"vocab.json"]] &&
+        [fm fileExistsAtPath:[modelDirPath stringByAppendingPathComponent:@"merges.txt"]];
+    if (!hasTokenizerJSON && !hasVocabAndMerges) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"LittleBitError"
+                                         code:104
+                                     userInfo:@{NSLocalizedDescriptionKey: @"tokenizer.json or vocab.json + merges.txt is missing."}];
+        }
+        return NO;
+    }
+
+    NSString* shardedIndex = [modelDirPath stringByAppendingPathComponent:@"model.safetensors.index.json"];
+    if ([fm fileExistsAtPath:shardedIndex]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"LittleBitError"
+                                         code:105
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Sharded checkpoints are not supported."}];
         }
         return NO;
     }
@@ -129,10 +169,23 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
             }
             completions = [_pendingUnloadCompletions copy];
             [_pendingUnloadCompletions removeAllObjects];
+            _callbackStartedOperation = false;
         }
         [self teardownModelOnMainQueue];
+        // Release the gate before callbacks: a caller is allowed to load a new
+        // model from its unload completion. The flags let finishBusyOperation
+        // avoid clearing a gate that a callback legitimately re-acquired.
+        {
+            std::lock_guard<std::mutex> lock(_lifecycleMutex);
+            _busy = false;
+            _gateReleasedForCallbacks = true;
+        }
         for (dispatch_block_t block in completions) {
             if (block) block();
+        }
+        {
+            std::lock_guard<std::mutex> lock(_lifecycleMutex);
+            _gateReleasedForCallbacks = false;
         }
     }
 }
@@ -148,7 +201,12 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
             std::lock_guard<std::mutex> lock(_lifecycleMutex);
             pending = _pendingUnload.load();
             if (!pending) {
-                _busy = false;
+                if (_callbackStartedOperation) {
+                    // A callback acquired the gate; it now owns it.
+                    _callbackStartedOperation = false;
+                } else {
+                    _busy = false;
+                }
             }
         }
         if (!pending) {
@@ -165,6 +223,8 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         std::lock_guard<std::mutex> lock(_lifecycleMutex);
         if (_pendingUnload.load() || _busy.exchange(true)) {
             rejected = YES;
+        } else if (_gateReleasedForCallbacks) {
+            _callbackStartedOperation = true;
         }
     }
     if (rejected) {
@@ -212,6 +272,9 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     {
         std::lock_guard<std::mutex> lock(_lifecycleMutex);
         wasBusy = _busy.exchange(true);
+        if (!wasBusy && _gateReleasedForCallbacks) {
+            _callbackStartedOperation = true;
+        }
         _cancelGeneration = true;
         _pendingUnload = true;
         if (completion) [_pendingUnloadCompletions addObject:[completion copy]];
@@ -239,11 +302,14 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         std::lock_guard<std::mutex> lock(_lifecycleMutex);
         if (self.state != EngineStateReady || _pendingUnload.load() || _busy.exchange(true)) {
             rejected = YES;
+        } else if (_gateReleasedForCallbacks) {
+            _callbackStartedOperation = true;
         }
     }
     if (rejected) {
         if (completion) {
             EnginePerformanceMetrics* empty = [[EnginePerformanceMetrics alloc] init];
+            empty.accepted = NO;
             completion(empty);
         }
         return;
@@ -256,6 +322,7 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     // Allocate in method scope so the main-queue block only captures a plain
     // Objective-C object pointer, never a local declared inside another block.
     EnginePerformanceMetrics* res = [[EnginePerformanceMetrics alloc] init];
+    res.accepted = YES;
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         std::string cppPrompt = [prompt UTF8String];

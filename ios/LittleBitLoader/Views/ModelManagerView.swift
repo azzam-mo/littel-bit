@@ -174,11 +174,19 @@ struct ModelManagerView: View {
             }
         }
 
-        if engine.currentModelPath == destURL.path {
-            // Never replace files that still back an active mmap.
-            engine.unloadModel(completion: finishImport)
-        } else {
-            finishImport()
+        // Always drain the bridge gate, not only when currentModelPath matches:
+        // a load may still be in flight, in which case currentModelPath is nil
+        // or still points at the previous model while C++ is reading this folder.
+        engine.unloadModel(completion: finishImport)
+    }
+
+    /// Mirrors `Qwen3Model::load` and `verifyModelDirectory:error:` so the UI
+    /// cannot report compatibility for a directory the engine will reject.
+    static func isCompatibleModelDirectory(_ url: URL) -> Bool {
+        do {
+            return try LittleBitEngineBridge.sharedInstance().verifyModelDirectory(url.path)
+        } catch {
+            return false
         }
     }
 
@@ -200,19 +208,15 @@ struct ModelManagerView: View {
         ]
 
         var items: [ModelFileItem] = []
-        var allRequiredPresent = true
 
         for (name, req) in expectedFiles {
             let fileURL = url.appendingPathComponent(name)
             let exists = fm.fileExists(atPath: fileURL.path)
             var sizeMB: Double = 0.0
-            if exists {
-                if let attr = try? fm.attributesOfItem(atPath: fileURL.path),
-                   let bytes = attr[.size] as? Int64 {
-                    sizeMB = Double(bytes) / (1024.0 * 1024.0)
-                }
-            } else if req {
-                allRequiredPresent = false
+            if exists,
+               let attr = try? fm.attributesOfItem(atPath: fileURL.path),
+               let bytes = attr[.size] as? Int64 {
+                sizeMB = Double(bytes) / (1024.0 * 1024.0)
             }
             items.append(ModelFileItem(name: name, sizeMB: sizeMB, isRequired: req, exists: exists))
         }
@@ -220,11 +224,14 @@ struct ModelManagerView: View {
         let hasTokenizerJSON = fm.fileExists(atPath: url.appendingPathComponent("tokenizer.json").path)
         let hasVocabAndMerges = fm.fileExists(atPath: url.appendingPathComponent("vocab.json").path)
             && fm.fileExists(atPath: url.appendingPathComponent("merges.txt").path)
+        let hasShardedIndex = fm.fileExists(atPath: url.appendingPathComponent("model.safetensors.index.json").path)
         self.fileItems = items
-        self.isCompatible = allRequiredPresent && (hasTokenizerJSON || hasVocabAndMerges)
+        self.isCompatible = Self.isCompatibleModelDirectory(url)
         self.verificationMessage = self.isCompatible ?
             "النموذج متوافق وكافة الملفات المطلوبة متوفرة." :
-            "تنبيه: الملفات الأساسية أو مسار الـ tokenizer غير مكتمل."
+            hasShardedIndex ?
+                "تنبيه: المحرك لا يدعم النماذج المجزأة (model.safetensors.index.json)." :
+                "تنبيه: الملفات الأساسية أو مسار الـ tokenizer غير مكتمل."
     }
 
     private func deleteModel(at offsets: IndexSet) {
@@ -238,12 +245,9 @@ struct ModelManagerView: View {
                     self?.selectedModelURL = nil
                 }
             }
-            if engine.currentModelPath == url.path {
-                // Wait for mmap teardown before removing the backing files.
-                engine.unloadModel(completion: remove)
-            } else {
-                remove()
-            }
+            // Wait for the bridge gate even when this folder is not the
+            // recorded current model: a load of it may still be in flight.
+            engine.unloadModel(completion: remove)
         }
     }
 }

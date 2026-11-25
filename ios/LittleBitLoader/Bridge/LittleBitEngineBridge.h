@@ -19,6 +19,8 @@ typedef NS_ENUM(NSInteger, EngineState) {
 @property (nonatomic, assign) NSInteger tokensGenerated;
 @property (nonatomic, assign) NSInteger residentMemoryMB;
 @property (nonatomic, assign) NSInteger kvCacheMB;
+/// NO when the bridge rejected the request before starting any work.
+@property (nonatomic, assign) BOOL accepted;
 @end
 
 @interface LittleBitEngineBridge : NSObject

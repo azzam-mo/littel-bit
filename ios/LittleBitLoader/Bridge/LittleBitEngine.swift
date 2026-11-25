@@ -59,25 +59,43 @@ class LittleBitEngine: ObservableObject {
     }
 
     func loadModel(from directoryURL: URL, maxSeqLen: Int = 1024) {
-        self.state = .loading
+        let bridge = LittleBitEngineBridge.sharedInstance()
         self.lastErrorMessage = nil
 
-        // Files.app imports are security-scoped; keep the scope alive until mmap is ready.
-        securityScopedModelURL?.stopAccessingSecurityScopedResource()
-        securityScopedModelURL = directoryURL
-        didStartModelAccess = directoryURL.startAccessingSecurityScopedResource()
+        // Keep the previous security scope alive until the bridge confirms the
+        // new load was accepted. Stopping it early can invalidate mmap-backed
+        // pages if the new load is rejected while the old model is still live.
+        let previousURL = securityScopedModelURL
+        let previousDidStart = didStartModelAccess
+        let newDidStart = directoryURL.startAccessingSecurityScopedResource()
+        self.state = .loading
 
-        let bridge = LittleBitEngineBridge.sharedInstance()
         bridge.loadModel(atPath: directoryURL.path, maxSeqLen: maxSeqLen) { [weak self] success, errorMsg in
-            guard let self = self else { return }
-            guard bridge.state != .unloaded else { return } // deferred unload won teardown
-            if success {
+            guard let self = self else {
+                if newDidStart { directoryURL.stopAccessingSecurityScopedResource() }
+                return
+            }
+            if success && bridge.state != .unloaded {
+                if previousDidStart { previousURL?.stopAccessingSecurityScopedResource() }
+                self.securityScopedModelURL = directoryURL
+                self.didStartModelAccess = newDidStart
                 self.state = .ready
                 self.currentModelName = directoryURL.lastPathComponent
                 self.currentModelPath = directoryURL.path
-            } else {
-                self.state = .error
-                self.lastErrorMessage = errorMsg ?? "فشل تحميل النموذج."
+                return
+            }
+
+            // The bridge rejected or failed the load. Drop only the new scope;
+            // the stored scope still describes whichever model remains mapped.
+            if newDidStart { directoryURL.stopAccessingSecurityScopedResource() }
+            guard bridge.state != .unloaded else { return } // deferred unload owns state/scope
+            self.lastErrorMessage = errorMsg ?? "فشل تحميل النموذج."
+            switch bridge.state {
+            case .ready: self.state = .ready
+            case .generating: self.state = .generating
+            case .loading: self.state = .loading
+            case .error: self.state = .error
+            case .unloaded: self.state = .unloaded
             }
         }
     }
@@ -114,23 +132,30 @@ class LittleBitEngine: ObservableObject {
         messages.append(ChatMessage(sender: "user", text: prompt))
 
         // Create empty assistant response message
-        let assistantIndex = messages.count
-        messages.append(ChatMessage(sender: "assistant", text: ""))
-        self.isGenerating = true
-        self.state = .generating
-
+        let assistantMessage = ChatMessage(sender: "assistant", text: "")
+        let assistantID = assistantMessage.id
+        messages.append(assistantMessage)
+        // The bridge is the source of truth for the busy gate; do not publish
+        // .generating here or Stop would let a second request be accepted.
         let bridge = LittleBitEngineBridge.sharedInstance()
         bridge.generatePrompt(prompt, temperature: temperature, topP: topP, maxNewTokens: maxTokens) { [weak self] tokenStr in
             guard let self = self else { return false }
-            if assistantIndex < self.messages.count {
-                self.messages[assistantIndex].text += tokenStr
+            // Target by identity: Clear chat during generation must not append
+            // late tokens from this request to a newer assistant bubble.
+            if let index = self.messages.firstIndex(where: { $0.id == assistantID }) {
+                self.messages[index].text += tokenStr
             }
             return true
         } completion: { [weak self] metrics in
             guard let self = self else { return }
             self.isGenerating = false
-            if bridge.state != .unloaded {
+            if metrics.accepted && bridge.state != .unloaded {
                 self.state = .ready
+            }
+            if !metrics.accepted {
+                // Rejected request: remove the empty assistant bubble and keep
+                // the state the bridge actually reported.
+                self.messages.removeAll { $0.id == assistantID }
             }
             self.loadTimeMs = metrics.loadTimeMs
             self.ttftMs = metrics.ttftMs
@@ -138,15 +163,19 @@ class LittleBitEngine: ObservableObject {
             self.kvCacheMB = metrics.kvCacheMB
             self.ramUsedMB = metrics.residentMemoryMB
         }
+        // Acceptance is synchronous inside generatePrompt: a rejected request
+        // leaves the bridge state unchanged and its completion already ran.
+        if bridge.state == .generating {
+            self.isGenerating = true
+            self.state = .generating
+        }
     }
 
     func stopGeneration() {
-        let bridge = LittleBitEngineBridge.sharedInstance()
-        bridge.stopGeneration()
-        self.isGenerating = false
-        if bridge.state != .unloaded {
-            self.state = .ready
-        }
+        // Only ask the bridge to cancel. isGenerating/.generating stay set until
+        // the generation completion runs, so Send remains disabled while the
+        // background pass is still winding down.
+        LittleBitEngineBridge.sharedInstance().stopGeneration()
     }
 
     func clearChat() {

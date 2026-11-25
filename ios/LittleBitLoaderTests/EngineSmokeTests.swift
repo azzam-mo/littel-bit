@@ -200,4 +200,164 @@ final class EngineSmokeTests: XCTestCase {
         XCTAssertEqual(observed, ["unload", "generation"])
         XCTAssertEqual(bridge.state, .unloaded)
     }
+
+    // MARK: - Phase 12 regressions
+
+    private func temporaryModelDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("littlebit-phase12-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func touch(_ name: String, in directory: URL) {
+        FileManager.default.createFile(
+            atPath: directory.appendingPathComponent(name).path,
+            contents: Data(),
+            attributes: nil
+        )
+    }
+
+    /// The bridge verifier must describe what `Qwen3Model::load` actually needs.
+    func testVerifyModelDirectoryMatchesEngineContract() throws {
+        let directory = try temporaryModelDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bridge = LittleBitEngineBridge.sharedInstance()
+
+        func expectCode(_ code: Int, _ message: String) {
+            XCTAssertThrowsError(try bridge.verifyModelDirectory(directory.path), message) { error in
+                XCTAssertEqual((error as NSError).code, code, message)
+            }
+        }
+
+        expectCode(101, "model.safetensors is required")
+        touch("model.safetensors", in: directory)
+        expectCode(102, "config.json is required")
+        touch("config.json", in: directory)
+        expectCode(103, "littlebit_config.json is required")
+        touch("littlebit_config.json", in: directory)
+        expectCode(104, "a tokenizer path is required")
+
+        touch("vocab.json", in: directory)
+        touch("merges.txt", in: directory)
+        XCTAssertNoThrow(try bridge.verifyModelDirectory(directory.path), "vocab+merges are accepted")
+
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("vocab.json"))
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("merges.txt"))
+        touch("tokenizer.json", in: directory)
+        XCTAssertNoThrow(try bridge.verifyModelDirectory(directory.path), "tokenizer.json alone is accepted")
+
+        touch("model.safetensors.index.json", in: directory)
+        expectCode(105, "sharded checkpoints are rejected")
+    }
+
+    /// The UI compatibility flag must use the same contract as the engine.
+    func testModelManagerCompatibilityMatchesEngineContract() throws {
+        let directory = try temporaryModelDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        XCTAssertFalse(ModelManagerView.isCompatibleModelDirectory(directory))
+        touch("model.safetensors", in: directory)
+        touch("config.json", in: directory)
+        touch("littlebit_config.json", in: directory)
+        XCTAssertFalse(ModelManagerView.isCompatibleModelDirectory(directory), "tokenizer missing")
+        touch("vocab.json", in: directory)
+        touch("merges.txt", in: directory)
+        XCTAssertTrue(ModelManagerView.isCompatibleModelDirectory(directory))
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("vocab.json"))
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("merges.txt"))
+        touch("tokenizer.json", in: directory)
+        XCTAssertTrue(ModelManagerView.isCompatibleModelDirectory(directory))
+        touch("model.safetensors.index.json", in: directory)
+        XCTAssertFalse(ModelManagerView.isCompatibleModelDirectory(directory), "sharded checkpoint")
+    }
+
+    /// A second load must not be admitted while a generation owns the bridge;
+    /// otherwise the UI can replace the security-scoped URL backing an mmap.
+    func testLoadRejectedWhileGenerationInFlight() throws {
+        let directory = try tinyModelDirectory()
+        unloadTinyModel()
+        loadTinyModel(directory)
+
+        let bridge = LittleBitEngineBridge.sharedInstance()
+        let generationDone = expectation(description: "generation completed")
+        bridge.generatePrompt(
+            "busy gate probe",
+            temperature: 0,
+            topP: 1,
+            maxNewTokens: 4096,
+            onToken: { _ in true }
+        ) { _ in generationDone.fulfill() }
+        XCTAssertEqual(bridge.state, .generating)
+
+        let rejected = expectation(description: "second load rejected while busy")
+        bridge.loadModel(atPath: directory.path, maxSeqLen: 64) { success, message in
+            XCTAssertFalse(success)
+            XCTAssertTrue(message?.contains("Another model operation") ?? false)
+            XCTAssertEqual(bridge.state, .generating)
+            rejected.fulfill()
+        }
+        wait(for: [rejected], timeout: 2.0)
+        wait(for: [generationDone], timeout: 10.0)
+
+        unloadTinyModel()
+        loadTinyModel(directory)
+        unloadTinyModel()
+    }
+
+    /// The unload completion is documented as the point where teardown is done;
+    /// starting a new load from it must not hit the old "gate still busy" bug.
+    func testLoadFromUnloadCompletionIsAccepted() throws {
+        let directory = try tinyModelDirectory()
+        unloadTinyModel()
+        loadTinyModel(directory)
+
+        let bridge = LittleBitEngineBridge.sharedInstance()
+        let reloaded = expectation(description: "load from unload completion")
+        bridge.unloadModel {
+            bridge.loadModel(atPath: directory.path, maxSeqLen: 64) { success, message in
+                XCTAssertTrue(success, message ?? "reload failed without a message")
+                reloaded.fulfill()
+            }
+        }
+        wait(for: [reloaded], timeout: 10.0)
+        XCTAssertEqual(bridge.state, .ready)
+        unloadTinyModel()
+    }
+
+    /// Rejected generation must report `accepted == false` so SwiftUI does not
+    /// publish a false .generating state or write zeroed metrics.
+    func testRejectedGenerationReportsAcceptedFalse() throws {
+        unloadTinyModel()
+        let bridge = LittleBitEngineBridge.sharedInstance()
+        let done = expectation(description: "rejected generation completion")
+        bridge.generatePrompt(
+            "rejected probe", temperature: 0, topP: 1, maxNewTokens: 1,
+            onToken: { _ in true }
+        ) { metrics in
+            XCTAssertFalse(metrics.accepted)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2.0)
+        XCTAssertEqual(bridge.state, .unloaded)
+    }
+
+    /// Files/delete staging relies on this completion running after teardown.
+    func testEngineUnloadCompletionRunsAfterBridgeTeardown() throws {
+        let directory = try tinyModelDirectory()
+        unloadTinyModel()
+        loadTinyModel(directory)
+
+        let engine = LittleBitEngine.shared
+        let done = expectation(description: "engine unload completion")
+        DispatchQueue.main.async {
+            engine.unloadModel {
+                XCTAssertEqual(engine.state, .unloaded)
+                XCTAssertNil(engine.currentModelPath)
+                done.fulfill()
+            }
+        }
+        wait(for: [done], timeout: 10.0)
+        XCTAssertEqual(LittleBitEngineBridge.sharedInstance().state, .unloaded)
+    }
 }

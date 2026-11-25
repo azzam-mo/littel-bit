@@ -2,9 +2,9 @@ name: LittleBit ARM64 NEON CI
 
 on:
   push:
-    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants", "phase11-neon32-dispatch" ]
+    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants", "phase11-neon32-dispatch", "phase12-**" ]
   pull_request:
-    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants", "phase11-neon32-dispatch" ]
+    branches: [ "main", "dev", "phase11-neon-binary-matvec", "phase11-neon-variants", "phase11-neon32-dispatch", "phase12-**" ]
   workflow_dispatch:
 
 jobs:
