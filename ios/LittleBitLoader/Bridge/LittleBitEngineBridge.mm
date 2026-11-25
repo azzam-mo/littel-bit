@@ -40,11 +40,15 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     std::unique_ptr<littlebit::Qwen3Model> _model;
     std::atomic<bool> _cancelGeneration;
     std::atomic<bool> _busy;
+    std::atomic<bool> _pendingUnload;
     std::string _pendingUTF8;
+    NSMutableArray* _pendingUnloadCompletions;
 }
 @property (nonatomic, readwrite) EngineState state;
 @property (nonatomic, readwrite, nullable) NSString* currentModelPath;
 @property (nonatomic, readwrite, nullable) NSString* lastError;
+- (void)teardownModelOnMainQueue;
+- (void)drainPendingUnloadOnMainQueue;
 @end
 
 @implementation LittleBitEngineBridge
@@ -66,6 +70,8 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         _lastError = nil;
         _cancelGeneration = false;
         _busy = false;
+        _pendingUnload = false;
+        _pendingUnloadCompletions = [NSMutableArray array];
         _model = std::make_unique<littlebit::Qwen3Model>();
     }
     return self;
@@ -95,6 +101,31 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     return YES;
 }
 
+// Main-queue only: clear_cache() and releasing the old Qwen3Model are what
+// actually close the mmap-backed SafeTensorsFile.
+- (void)teardownModelOnMainQueue {
+    _model->clear_cache();
+    _model = std::make_unique<littlebit::Qwen3Model>();
+    _pendingUTF8.clear();
+    self.state = EngineStateUnloaded;
+    self.currentModelPath = nil;
+    self.lastError = nil;
+    _cancelGeneration = false;
+}
+
+// Drains every unload requested while an operation held _busy. A completion
+// may request another unload; the loop keeps _busy held until all are done.
+- (void)drainPendingUnloadOnMainQueue {
+    while (_pendingUnload.exchange(false)) {
+        [self teardownModelOnMainQueue];
+        NSArray* completions = [_pendingUnloadCompletions copy];
+        [_pendingUnloadCompletions removeAllObjects];
+        for (dispatch_block_t block in completions) {
+            if (block) block();
+        }
+    }
+}
+
 - (void)loadModelAtPath:(NSString*)modelDirPath 
              maxSeqLen:(NSInteger)maxSeqLen 
             completion:(void (^)(BOOL success, NSString* _Nullable errorMsg))completion {
@@ -111,32 +142,44 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         bool ok = self->_model->load(cppPath, static_cast<size_t>(maxSeqLen));
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            _busy = false;
-            if (ok) {
+            BOOL deferredUnload = _pendingUnload.load();
+            if (deferredUnload) {
+                [self drainPendingUnloadOnMainQueue];
+                if (completion) completion(NO, @"Model load was cancelled by unload.");
+            } else if (ok) {
                 self.state = EngineStateReady;
                 self.currentModelPath = modelDirPath;
-                completion(YES, nil);
+                if (completion) completion(YES, nil);
             } else {
                 self.state = EngineStateError;
                 self.lastError = @"Failed to load model weights or config files.";
-                completion(NO, self.lastError);
+                if (completion) completion(NO, self.lastError);
             }
+            // Release the gate only after teardown and callbacks are finished.
+            _busy = false;
         });
     });
 }
 
 - (void)unloadModel {
-    if (_busy.load()) {
-        // Never free the model while a background forward pass is using it.
+    [self unloadModelWithCompletion:nil];
+}
+
+- (void)unloadModelWithCompletion:(void (^)(void))completion {
+    if (_busy.exchange(true)) {
+        // Never free the model while a background forward pass or load is
+        // using it. The owning operation drains this on the main queue.
         _cancelGeneration = true;
+        _pendingUnload = true;
+        if (completion) [_pendingUnloadCompletions addObject:[completion copy]];
         return;
     }
-    _model->clear_cache();
-    _model = std::make_unique<littlebit::Qwen3Model>();
-    _pendingUTF8.clear();
-    self.state = EngineStateUnloaded;
-    self.currentModelPath = nil;
-    self.lastError = nil;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self teardownModelOnMainQueue];
+        if (completion) completion();
+        _busy = false;
+    });
 }
 
 - (void)generatePrompt:(NSString*)prompt
@@ -181,12 +224,17 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
             return keep_going;
         };
 
+        auto shouldCancel = [self]() -> bool {
+            return self->_cancelGeneration.load();
+        };
+
         littlebit::PerformanceMetrics m = self->_model->generate(
             cppPrompt,
             static_cast<size_t>(maxNewTokens),
             temperature,
             topP,
-            cppCallback
+            cppCallback,
+            shouldCancel
         );
 
         res.loadTimeMs = m.load_time_ms;
@@ -196,11 +244,17 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         res.residentMemoryMB = m.resident_memory_mb;
         res.kvCacheMB = m.kv_cache_mb;
 
-        _busy = false;
         _pendingUTF8.clear();
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.state = EngineStateReady;
+            if (_pendingUnload.load()) {
+                [self drainPendingUnloadOnMainQueue];
+            } else {
+                self.state = EngineStateReady;
+            }
+            // Swift checks bridge.state before forcing .ready in its UI model.
             if (completion) completion(res);
+            // Gate must stay closed until after deferred teardown and callbacks.
+            _busy = false;
         });
     });
 }

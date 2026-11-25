@@ -36,6 +36,11 @@ typedef NS_ENUM(NSInteger, EngineState) {
 
 - (void)unloadModel;
 
+/// Unloads the model and calls `completion` on the main queue only after
+/// teardown has actually released the mmap-backed weights. If a generation or
+/// load is in flight, the request is deferred until that operation completes.
+- (void)unloadModelWithCompletion:(void (^ _Nullable)(void))completion;
+
 - (void)generatePrompt:(NSString*)prompt
            temperature:(float)temperature
                   topP:(float)topP
