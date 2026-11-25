@@ -16,8 +16,6 @@ permissions:
 env:
   MODEL_REPO: LittleBitLLM/littlebit-qwen3-8b-0.55bpw
   MODEL_BASE_URL: https://huggingface.co/LittleBitLLM/littlebit-qwen3-8b-0.55bpw/resolve/main
-  MODEL_DIR: ${{ runner.temp }}/littlebit-qwen3-8b-0.55bpw
-  BUILD_DIR: ${{ runner.temp }}/littlebit-macos-arm64-build
   MODEL_CACHE_KEY: littlebit-qwen3-8b-0.55bpw-sha256-v1-5b087e4c79c23697355014fdd00b083c91d0c731ddd80a16d6affbe156f17179-aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4-a0429e9b6df54382d650f6295c954e9c2f9972524526216339cd51b894e8cca6-5f77198efa794c3d2dcd8dfa7eade4c5d8475c5731435afbe64c9625e837e28c-81051cd3f6e77013827148d0b8a6ead93f8ac390d5ab805f849199f0af6a08db
   MODEL_SAFETENSORS_SHA256: 5b087e4c79c23697355014fdd00b083c91d0c731ddd80a16d6affbe156f17179
   MODEL_TOKENIZER_SHA256: aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
@@ -32,6 +30,13 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      - name: Set runtime paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODEL_DIR=$RUNNER_TEMP/littlebit-qwen3-8b-0.55bpw" >> "$GITHUB_ENV"
+          echo "BUILD_DIR=$RUNNER_TEMP/littlebit-macos-arm64-build" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -239,7 +244,8 @@ jobs:
           set -e
           echo "SMOKE_RC=$rc" >> "$GITHUB_ENV"
 
-          python3 - "$RUNNER_TEMP/real-model-smoke.log" "$GITHUB_STEP_SUMMARY" <<'PY' || true
+          set +e
+          python3 - "$RUNNER_TEMP/real-model-smoke.log" "$GITHUB_STEP_SUMMARY" <<'PY'
           import re
           import sys
           from pathlib import Path
@@ -271,6 +277,7 @@ jobs:
           with open(summary_path, "a", encoding="utf-8") as summary:
               summary.write(block)
           PY
+          set -e
           exit "$rc"
 
       - name: Real-model logits comparison (only if NumPy is already available)
@@ -288,8 +295,9 @@ jobs:
               | tee "$RUNNER_TEMP/logits-compare.log"
             rc=${PIPESTATUS[0]}
             set -e
-            status="PASS"  # overwritten below on failure
-            if [ "$rc" -ne 0 ]; then
+            if [ "$rc" -eq 0 ]; then
+              status="PASS"
+            else
               status="FAIL"
             fi
           else
