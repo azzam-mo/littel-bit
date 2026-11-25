@@ -158,11 +158,7 @@ struct ModelManagerView: View {
             return
         }
 
-        let finishImport = { [weak self] in
-            guard let self = self else {
-                try? fm.removeItem(at: stagingURL)
-                return
-            }
+        let finishImport = { [self] in
             try? fm.removeItem(at: destURL)
             do {
                 try fm.moveItem(at: stagingURL, to: destURL)
@@ -184,7 +180,8 @@ struct ModelManagerView: View {
     /// cannot report compatibility for a directory the engine will reject.
     static func isCompatibleModelDirectory(_ url: URL) -> Bool {
         do {
-            return try LittleBitEngineBridge.sharedInstance().verifyModelDirectory(url.path)
+            try LittleBitEngineBridge.sharedInstance().verifyModelDirectory(url.path)
+            return true
         } catch {
             return false
         }
@@ -238,11 +235,11 @@ struct ModelManagerView: View {
         let fm = FileManager.default
         let urls = offsets.map { importedModels[$0] }
         for url in urls {
-            let remove = { [weak self] in
+            let remove = { [self] in
                 try? fm.removeItem(at: url)
-                self?.scanDocumentsDirectory()
-                if self?.selectedModelURL?.path == url.path {
-                    self?.selectedModelURL = nil
+                self.scanDocumentsDirectory()
+                if self.selectedModelURL?.path == url.path {
+                    self.selectedModelURL = nil
                 }
             }
             // Wait for the bridge gate even when this folder is not the
