@@ -93,14 +93,14 @@ class LittleBitEngine: ObservableObject {
     func unloadModel() {
         // The bridge calls back only after clear_cache() and model release have
         // finished on the main queue, even if generation is still in flight.
-        LittleBitEngineBridge.sharedInstance().unloadModelWithCompletion { [weak self] in
+        LittleBitEngineBridge.sharedInstance().unloadModel(completion: { [weak self] in
             guard let self = self else { return }
             self.stopModelAccess()
             self.state = .unloaded
             self.currentModelName = "لا يوجد نموذج محدد"
             self.currentModelPath = nil
             self.lastErrorMessage = nil
-        }
+        })
     }
 
     func sendUserMessage(_ prompt: String, temperature: Float = 0.6, topP: Float = 0.95, maxTokens: Int = 256) {

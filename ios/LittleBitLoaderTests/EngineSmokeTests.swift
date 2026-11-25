@@ -75,7 +75,7 @@ final class EngineSmokeTests: XCTestCase {
         let bridge = LittleBitEngineBridge.sharedInstance()
         guard bridge.state != .unloaded else { return }
         let unloaded = expectation(description: "tiny model unloaded")
-        bridge.unloadModelWithCompletion { unloaded.fulfill() }
+        bridge.unloadModel(completion: { unloaded.fulfill() })
         wait(for: [unloaded], timeout: 10.0)
     }
 
@@ -100,7 +100,7 @@ final class EngineSmokeTests: XCTestCase {
                 if !unloadRequested {
                     unloadRequested = true
                     // onToken runs on the main queue while _busy is still true.
-                    bridge.unloadModelWithCompletion { unloadDone.fulfill() }
+                    bridge.unloadModel(completion: { unloadDone.fulfill() })
                 }
                 return true
             },
@@ -134,7 +134,7 @@ final class EngineSmokeTests: XCTestCase {
             loadDone.fulfill()
         }
         // Called synchronously from the main test thread: _busy is already true.
-        bridge.unloadModelWithCompletion { unloadDone.fulfill() }
+        bridge.unloadModel(completion: { unloadDone.fulfill() })
 
         XCTAssertEqual(bridge.state, .loading)
         wait(for: [unloadDone, loadDone], timeout: 10.0)
@@ -175,12 +175,12 @@ final class EngineSmokeTests: XCTestCase {
             onToken: { _ in
                 if !unloadRequested {
                     unloadRequested = true
-                    bridge.unloadModelWithCompletion {
+                    bridge.unloadModel(completion: {
                         lock.lock()
                         order.append("unload")
                         lock.unlock()
                         unloadDone.fulfill()
-                    }
+                    })
                 }
                 return true
             },
