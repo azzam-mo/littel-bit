@@ -505,6 +505,26 @@ jobs:
           summary_path = sys.argv[1]
           env = os.environ
 
+          # Report the entitlement from the checkout instead of a hardcoded note.
+          entitlement_file = pathlib.Path("ios/LittleBitLoader/LittleBitLoader.entitlements")
+          project_file = pathlib.Path("LittleBitLoader.xcodeproj/project.pbxproj")
+          try:
+              entitlement_text = entitlement_file.read_text(encoding="utf-8")
+              project_text = project_file.read_text(encoding="utf-8")
+              entitlement_wired = (
+                  "com.apple.developer.kernel.increased-memory-limit" in entitlement_text
+                  and "CODE_SIGN_ENTITLEMENTS" in project_text
+              )
+          except OSError:
+              entitlement_wired = False
+          if entitlement_wired:
+              entitlement_line = (
+                  "- Increased-memory-limit entitlement: present and wired via "
+                  "CODE_SIGN_ENTITLEMENTS; real-device provisioning capability not verified here."
+              )
+          else:
+              entitlement_line = "- Increased-memory-limit entitlement: not present or not wired."
+
           products = pathlib.Path(
               env.get("IOS_DERIVED_DATA", ""),
               "Build/Products/Debug-iphonesimulator",
@@ -630,7 +650,7 @@ jobs:
               f"  - Mach-O files checked: {', '.join(arch_lines) if arch_lines else 'none found'}",
               f"  - `neon_variant_32` found in: {', '.join(symbol_hits) if symbol_hits else 'none'}",
               "- Real-model tests: none in `ios/LittleBitLoaderTests`; model-backed load/generation checks are local-only (no weights downloaded or committed).",
-              "- Increased-memory-limit entitlement: not present; not changed in this CI-only commit.",
+              entitlement_line,
           ])
           with open(summary_path, "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")

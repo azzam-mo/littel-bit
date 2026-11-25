@@ -147,14 +147,38 @@ struct ModelManagerView: View {
         let fm = FileManager.default
         guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
         let destURL = docs.appendingPathComponent(sourceURL.lastPathComponent)
+        // The file-importer security scope is stopped as soon as this method
+        // returns, so copy to staging synchronously while it is still valid.
+        let stagingURL = docs.appendingPathComponent(".import-\(UUID().uuidString)")
 
-        try? fm.removeItem(at: destURL)
         do {
-            try fm.copyItem(at: sourceURL, to: destURL)
-            scanDocumentsDirectory()
-            selectModel(destURL)
+            try fm.copyItem(at: sourceURL, to: stagingURL)
         } catch {
-            print("Failed to copy model: \(error)")
+            print("Failed to stage model import: \(error)")
+            return
+        }
+
+        let finishImport = { [weak self] in
+            guard let self = self else {
+                try? fm.removeItem(at: stagingURL)
+                return
+            }
+            try? fm.removeItem(at: destURL)
+            do {
+                try fm.moveItem(at: stagingURL, to: destURL)
+                self.scanDocumentsDirectory()
+                self.selectModel(destURL)
+            } catch {
+                print("Failed to install staged model: \(error)")
+                try? fm.removeItem(at: stagingURL)
+            }
+        }
+
+        if engine.currentModelPath == destURL.path {
+            // Never replace files that still back an active mmap.
+            engine.unloadModel(completion: finishImport)
+        } else {
+            finishImport()
         }
     }
 
@@ -162,12 +186,15 @@ struct ModelManagerView: View {
         selectedModelURL = url
         let fm = FileManager.default
 
+        // Engine contract (src/model.cpp:457-537): config.json,
+        // littlebit_config.json and single-file model.safetensors are required.
+        // Tokenizer is tokenizer.json OR vocab.json + merges.txt.
         let expectedFiles: [(String, Bool)] = [
             ("model.safetensors", true),
             ("config.json", true),
-            ("littlebit_config.json", false),
-            ("vocab.json", true),
-            ("merges.txt", true),
+            ("littlebit_config.json", true),
+            ("vocab.json", false),
+            ("merges.txt", false),
             ("tokenizer.json", false),
             ("generation_config.json", false)
         ]
@@ -190,23 +217,33 @@ struct ModelManagerView: View {
             items.append(ModelFileItem(name: name, sizeMB: sizeMB, isRequired: req, exists: exists))
         }
 
+        let hasTokenizerJSON = fm.fileExists(atPath: url.appendingPathComponent("tokenizer.json").path)
+        let hasVocabAndMerges = fm.fileExists(atPath: url.appendingPathComponent("vocab.json").path)
+            && fm.fileExists(atPath: url.appendingPathComponent("merges.txt").path)
         self.fileItems = items
-        self.isCompatible = allRequiredPresent
-        self.verificationMessage = allRequiredPresent ? 
-            "النموذج متوافق وكافة الملفات المطلوبة متوفرة." : 
-            "تنبيه: بعض الملفات الإلزامية غير موجودة في المجلد."
+        self.isCompatible = allRequiredPresent && (hasTokenizerJSON || hasVocabAndMerges)
+        self.verificationMessage = self.isCompatible ?
+            "النموذج متوافق وكافة الملفات المطلوبة متوفرة." :
+            "تنبيه: الملفات الأساسية أو مسار الـ tokenizer غير مكتمل."
     }
 
     private func deleteModel(at offsets: IndexSet) {
         let fm = FileManager.default
-        for index in offsets {
-            let url = importedModels[index]
-            if engine.currentModelPath == url.path {
-                engine.unloadModel()
+        let urls = offsets.map { importedModels[$0] }
+        for url in urls {
+            let remove = { [weak self] in
+                try? fm.removeItem(at: url)
+                self?.scanDocumentsDirectory()
+                if self?.selectedModelURL?.path == url.path {
+                    self?.selectedModelURL = nil
+                }
             }
-            try? fm.removeItem(at: url)
+            if engine.currentModelPath == url.path {
+                // Wait for mmap teardown before removing the backing files.
+                engine.unloadModel(completion: remove)
+            } else {
+                remove()
+            }
         }
-        scanDocumentsDirectory()
-        selectedModelURL = nil
     }
 }
