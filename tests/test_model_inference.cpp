@@ -18,7 +18,9 @@ namespace {
 std::string rewritten_fixture(const std::string& source, const std::string& suffix) {
     namespace fs = std::filesystem;
     const fs::path target_dir = fs::temp_directory_path() /
-        ("littlebit-phase12-" + suffix + "-" + std::to_string(fs::last_write_time(source).time_since_epoch().count()));
+        ("littlebit-phase12-" + suffix + "-" +
+         std::to_string(static_cast<long long>(
+             fs::last_write_time(source).time_since_epoch().count())));
     fs::create_directories(target_dir);
     for (const auto& entry : fs::directory_iterator(source)) {
         fs::copy(entry.path(), target_dir / entry.path().filename(),
