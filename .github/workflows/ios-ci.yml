@@ -1,0 +1,832 @@
+name: iOS Simulator CI
+
+# `macos-15` currently maps to the arm64 (M1) macOS 15 runner image.
+# Xcode 16.4 is documented there; if the image drifts, fall back to another
+# installed Xcode rather than failing before the build.
+on:
+  push:
+    branches: [ "phase11-**" ]
+  pull_request:
+    branches: [ "phase11-ios-ci" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  ios-simulator-tests:
+    name: iOS Simulator XCTest (arm64)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IOS_BUILD_LOG=$RUNNER_TEMP/ios-xcodebuild.log" >> "$GITHUB_ENV"
+          echo "IOS_DERIVED_DATA=$RUNNER_TEMP/LittleBitDerivedData" >> "$GITHUB_ENV"
+          echo "IOS_RESULT_BUNDLE=$RUNNER_TEMP/LittleBitTests.xcresult" >> "$GITHUB_ENV"
+
+          touch "$RUNNER_TEMP/ios-xcodebuild.log"
+          selected="$(xcode-select -p)"
+          for candidate in \
+            "/Applications/Xcode_16.4.app" \
+            "/Applications/Xcode_16.3.app" \
+            "/Applications/Xcode.app"
+          do
+            if [ -d "$candidate" ]; then
+              sudo xcode-select -s "$candidate"
+              selected="$candidate"
+              break
+            fi
+          done
+
+          echo "Selected Xcode path: $selected"
+          xcodebuild -version | tee "$RUNNER_TEMP/xcode_version.txt"
+          xcode_version="$(awk 'NF { printf "%s%s", sep, $0; sep = " " }' "$RUNNER_TEMP/xcode_version.txt")"
+          echo "XCODE_VERSION=$xcode_version" >> "$GITHUB_ENV"
+
+      - name: Generate Xcode project and ephemeral scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dump_on_failure() {
+            python3 scripts/dump_pbxproj_context.py "$RUNNER_TEMP/xcodebuild-list.log" LittleBitLoader.xcodeproj/project.pbxproj
+          }
+          gate_xcodebuild_list() {
+            if ! xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"; then
+              dump_on_failure
+              return 1
+            fi
+          }
+
+          python3 scripts/generate_xcode_project.py
+          python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
+
+          echo "### pbxproj diagnostics (informational; never fails the job)"
+          set +e
+          echo "### head -c 300 project.pbxproj | xxd"
+          head -c 300 LittleBitLoader.xcodeproj/project.pbxproj | xxd
+          echo "### file project.pbxproj"
+          file LittleBitLoader.xcodeproj/project.pbxproj
+          echo "### plutil -lint LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -lint LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -lint exit: $?"
+          echo "### plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -convert json exit: $?"
+          echo "### xcodebuild -list -project LittleBitLoader.xcodeproj (diagnostic, stderr included)"
+          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1
+          echo "xcodebuild -list diagnostic exit: $?"
+          set -euo pipefail
+
+          gate_xcodebuild_list
+          python3 scripts/check_xcode_project.py
+
+          # The generator writes project.pbxproj but no .xcscheme. Create a
+          # shared scheme in the generated project only; no file is committed.
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          project = pathlib.Path("LittleBitLoader.xcodeproj")
+          pbx = (project / "project.pbxproj").read_text(encoding="utf-8")
+
+          def target_id(name: str) -> str:
+              pattern = (
+                  r"^\t\t([0-9A-F]{24}) /\* "
+                  + re.escape(name)
+                  + r" \*/ = \{\n\t\t\tisa = PBXNativeTarget;"
+              )
+              match = re.search(pattern, pbx, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"target not found in pbxproj: {name}")
+              return match.group(1)
+
+          app_id = target_id("LittleBitLoader")
+          test_id = target_id("LittleBitLoaderTests")
+
+          def ref(ident: str, buildable: str, blueprint: str) -> str:
+              return f'''<BuildableReference
+                  BuildableIdentifier = "primary"
+                  BlueprintIdentifier = "{ident}"
+                  BuildableName = "{buildable}"
+                  BlueprintName = "{blueprint}"
+                  ReferencedContainer = "container:LittleBitLoader.xcodeproj">
+                </BuildableReference>'''
+
+          scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
+          <Scheme LastUpgradeVersion="1600" version="1.7">
+            <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+              <BuildActionEntries>
+                <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="YES" buildForAnalyzing="YES">
+                  {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+                </BuildActionEntry>
+                <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+                  {ref(test_id, "LittleBitLoaderTests.xctest", "LittleBitLoaderTests")}
+                </BuildActionEntry>
+              </BuildActionEntries>
+            </BuildAction>
+            <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
+              <Testables>
+                <TestableReference skipped="NO">
+                  {ref(test_id, "LittleBitLoaderTests.xctest", "LittleBitLoaderTests")}
+                </TestableReference>
+              </Testables>
+            </TestAction>
+            <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+              </BuildableProductRunnable>
+            </LaunchAction>
+            <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+              </BuildableProductRunnable>
+            </ProfileAction>
+            <AnalyzeAction buildConfiguration="Debug"/>
+            <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
+          </Scheme>
+          '''
+          scheme_dir = project / "xcshareddata" / "xcschemes"
+          scheme_dir.mkdir(parents=True, exist_ok=True)
+          scheme_path = scheme_dir / "LittleBitLoader.xcscheme"
+          scheme_path.write_text(scheme, encoding="utf-8")
+          print("Generated ephemeral scheme", scheme_path)
+          PY
+
+          gate_xcodebuild_list
+
+      - name: Choose iPhone Simulator by name
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/simulators.json"
+          python3 - "$RUNNER_TEMP/simulators.json" "$GITHUB_ENV" <<'PY'
+          import json
+          import sys
+
+          sim_path, env_path = sys.argv[1], sys.argv[2]
+          data = json.load(open(sim_path, encoding="utf-8"))
+
+          ios_devices = []
+          for runtime, devices in data.get("devices", {}).items():
+              if "SimRuntime.iOS-" not in runtime:
+                  continue
+              ios_version = runtime.rsplit("iOS-", 1)[1].replace("-", ".")
+              try:
+                  version_key = tuple(int(part) for part in ios_version.split("."))
+              except ValueError:
+                  version_key = (0,)
+              for device in devices:
+                  if device.get("isAvailable"):
+                      ios_devices.append((device["name"], ios_version, version_key))
+
+          if not ios_devices:
+              raise SystemExit("no available iOS Simulator devices")
+
+          def newest(name_filter):
+              matches = [item for item in ios_devices if name_filter(item[0])]
+              if not matches:
+                  return None
+              return sorted(matches, key=lambda item: (item[0], item[2]), reverse=True)[0]
+
+          chosen = None
+          for name in ("iPhone 16", "iPhone 15", "iPhone 14", "iPhone 13"):
+              chosen = newest(lambda candidate, wanted=name: candidate == wanted)
+              if chosen:
+                  break
+          if not chosen:
+              chosen = newest(lambda candidate: candidate.startswith("iPhone"))
+          if not chosen:
+              raise SystemExit("no available iPhone Simulator device")
+
+          name, ios_version, _ = chosen
+          destination = f"platform=iOS Simulator,name={name},OS={ios_version}"
+          print(f"Simulator: {name} (iOS {ios_version})")
+          print(f"Destination: {destination}")
+          with open(env_path, "a", encoding="utf-8") as env:
+              env.write(f"SIMULATOR_NAME={name}\n")
+              env.write(f"SIMULATOR_OS={ios_version}\n")
+              env.write(f"DESTINATION={destination}\n")
+          PY
+
+      - name: Generate tiny model fixture for lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Synthetic fixture from tests/make_tiny_model.py only; never a real model.
+          python3 tests/make_tiny_model.py "$RUNNER_TEMP/littlebit-tiny-model"
+          echo "IOS_TINY_MODEL=$RUNNER_TEMP/littlebit-tiny-model" >> "$GITHUB_ENV"
+
+      - name: Build for testing
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "TEST_RC=not-run" >> "$GITHUB_ENV"
+          rm -rf "$IOS_DERIVED_DATA"
+          set +e
+          xcodebuild build-for-testing \
+            -project LittleBitLoader.xcodeproj \
+            -scheme LittleBitLoader \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "$DESTINATION" \
+            -derivedDataPath "$IOS_DERIVED_DATA" \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee -a "$IOS_BUILD_LOG"
+          build_rc=${PIPESTATUS[0]}
+          set -e
+          echo "BUILD_RC=$build_rc" >> "$GITHUB_ENV"
+          if [ "$build_rc" -ne 0 ]; then
+            echo "build-for-testing failed with rc=$build_rc" >&2
+            python3 - "$IOS_BUILD_LOG" "$GITHUB_STEP_SUMMARY" <<'PY' || true
+          import pathlib
+          import re
+          import sys
+
+          log_path = pathlib.Path(sys.argv[1])
+          summary_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
+          lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+          error_re = re.compile(r": (?:fatal )?error:")
+          seen = set()
+          errors = []
+          for index, line in enumerate(lines):
+              if not error_re.search(line) or line in seen:
+                  continue
+              seen.add(line)
+              errors.append((index, line))
+              if len(errors) == 40:
+                  break
+
+          warning_lines = list(dict.fromkeys(
+              line for line in lines
+              if "LittleBitEngine.swift" in line and "warning:" in line
+          ))
+
+          block = ["### Compiler diagnostics (build failure)", "", "```text"]
+          if errors:
+              for index, line in errors:
+                  block.append(line)
+                  block.extend(lines[index + 1:index + 3])
+          else:
+              block.append("No ': error:' / ': fatal error:' lines found in the build log.")
+          block.extend(["```", ""])
+          if warning_lines:
+              block.extend(["### Warnings from LittleBitEngine.swift", "", "```text"])
+              block.extend(warning_lines)
+              block.extend(["```", ""])
+
+          if summary_path and summary_path.parent.is_dir():
+              existing = summary_path.read_text(encoding="utf-8", errors="replace") if summary_path.is_file() else ""
+              summary_path.write_text("\n".join(block) + ("\n" + existing if existing else ""), encoding="utf-8")
+          print("\n".join(block))
+          PY
+            first_error_line="$(grep -n -m 1 -E 'error:|fatal error:' "$IOS_BUILD_LOG" | cut -d: -f1 || true)"
+            if [ -n "$first_error_line" ]; then
+              context_start=$(( first_error_line > 10 ? first_error_line - 10 : 1 ))
+              context_end=$(( first_error_line + 29 ))
+              echo "--- first build error context (lines $context_start-$context_end) ---" >&2
+              sed -n "${context_start},${context_end}p" "$IOS_BUILD_LOG" >&2
+            else
+              echo "--- first 40 lines of build log (no 'error:' line found) ---" >&2
+              sed -n '1,40p' "$IOS_BUILD_LOG" >&2
+            fi
+            exit "$build_rc"
+          fi
+
+      - name: Run XCTest without building
+        shell: bash
+        run: |
+          set -uo pipefail
+          rm -rf "$IOS_RESULT_BUNDLE"
+          set +e
+          TEST_RUNNER_LITTLEBIT_TINY_MODEL="$IOS_TINY_MODEL" \
+          xcodebuild test-without-building \
+            -project LittleBitLoader.xcodeproj \
+            -scheme LittleBitLoader \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "$DESTINATION" \
+            -derivedDataPath "$IOS_DERIVED_DATA" \
+            -resultBundlePath "$IOS_RESULT_BUNDLE" \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee -a "$IOS_BUILD_LOG"
+          test_rc=${PIPESTATUS[0]}
+          set -e
+          echo "TEST_RC=$test_rc" >> "$GITHUB_ENV"
+          if [ "$test_rc" -ne 0 ]; then
+            echo "test-without-building failed with rc=$test_rc" >&2
+          fi
+          exit "$test_rc"
+
+      - name: Parse XCTest results
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          summary_json="$RUNNER_TEMP/xcresult_summary.json"
+          raw_summary="$RUNNER_TEMP/xctest-summary.txt"
+          : > "$summary_json"
+          if [ -d "$IOS_RESULT_BUNDLE" ]; then
+            set +e
+            xcrun xcresulttool get test-results summary \
+              --path "$IOS_RESULT_BUNDLE" > "$summary_json" 2>> "$IOS_BUILD_LOG"
+            tool_rc=$?
+            set -e
+            echo "xcresulttool rc=$tool_rc"
+          else
+            echo "No .xcresult bundle was produced."
+          fi
+
+          {
+            echo "### xcresulttool get test-results summary"
+            if [ -s "$summary_json" ]; then cat "$summary_json"; else echo "(empty)"; fi
+            echo "### Executed-tests lines from xcodebuild log"
+            grep -E 'Executed [0-9]+ tests?, with [0-9]+ failures?' "$IOS_BUILD_LOG" || true
+          } > "$raw_summary"
+          echo "XCTEST_RAW_SUMMARY=$raw_summary" >> "$GITHUB_ENV"
+
+          unload_results="$RUNNER_TEMP/unload-test-results.txt"
+          python3 - "$IOS_BUILD_LOG" "$GITHUB_ENV" "$unload_results" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          log_path, env_path, out_path = sys.argv[1:4]
+          pattern = re.compile(r"EngineSmokeTests (testUnload\w+)\]' (passed|failed|skipped)")
+          counts = {"passed": 0, "failed": 0, "skipped": 0}
+          names = {}
+          try:
+              text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+              for name, status in pattern.findall(text):
+                  counts[status] += 1
+                  names[name] = status
+          except OSError:
+              pass
+          if names:
+              result = ", ".join(f"{counts[k]} {k}" for k in ("passed", "failed", "skipped"))
+              result += " (" + ", ".join(sorted(names)) + ")"
+          else:
+              result = "not reported (no matching test log lines)"
+          Path(out_path).write_text(result + "\n", encoding="utf-8")
+          with open(env_path, "a", encoding="utf-8") as env:
+              env.write(f"UNLOAD_TEST_RESULTS={result}\n")
+          print("Unload lifecycle tests:", result)
+          PY
+
+          python3 - "$summary_json" "$GITHUB_ENV" "$IOS_BUILD_LOG" "$raw_summary" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          summary_path, env_path, log_path, raw_path = sys.argv[1:5]
+
+          def as_int(value):
+              if isinstance(value, dict):
+                  for key in ("_value", "value"):
+                      if key in value:
+                          return as_int(value[key])
+                  return None
+              if isinstance(value, bool):
+                  return None
+              try:
+                  return int(str(value))
+              except (TypeError, ValueError):
+                  return None
+
+          def find_metric(obj, keys):
+              if isinstance(obj, dict):
+                  for key, value in obj.items():
+                      if key in keys:
+                          number = as_int(value)
+                          if number is not None:
+                              return number
+                      number = find_metric(value, keys)
+                      if number is not None:
+                          return number
+              elif isinstance(obj, list):
+                  for value in obj:
+                      number = find_metric(value, keys)
+                      if number is not None:
+                          return number
+              return None
+
+          def first_not_none(*values):
+              for value in values:
+                  if value is not None:
+                      return value
+              return None
+
+          # Xcode 16.3+ emits totalTestCount/passedTests/failedTests/skippedTests.
+          # Older xcresult JSON used testsCount/testFailureCount/testSkippedCount.
+          total = failed = skipped = passed = None
+          source = "unparsed"
+          if os.path.getsize(summary_path):
+              try:
+                  with open(summary_path, encoding="utf-8") as fh:
+                      data = json.load(fh)
+                  total = find_metric(data, {"totalTestCount", "testsCount"})
+                  passed = find_metric(data, {"passedTests"})
+                  failed = find_metric(data, {"failedTests", "testFailureCount"})
+                  skipped = find_metric(data, {"skippedTests", "testSkippedCount"})
+                  if None not in (total, failed):
+                      source = "xcresulttool"
+              except (OSError, ValueError) as exc:
+                  print(f"Could not parse xcresult summary: {exc}")
+
+          if total is None or failed is None:
+              try:
+                  with open(log_path, encoding="utf-8", errors="replace") as fh:
+                      log_text = fh.read()
+                  match = re.search(
+                      r"Executed\s+(\d+)\s+tests?,\s+with\s+(\d+)\s+failures?",
+                      log_text,
+                  )
+                  if match:
+                      log_total, log_failed = int(match.group(1)), int(match.group(2))
+                      total = first_not_none(total, log_total)
+                      failed = first_not_none(failed, log_failed)
+                      source = "build-log" if source == "unparsed" else source + "+build-log"
+              except OSError as exc:
+                  print(f"Could not read xcodebuild log: {exc}")
+
+          if passed is None and total is not None and failed is not None:
+              skipped_for_calc = skipped if skipped is not None else 0
+              passed = total - failed - skipped_for_calc
+              if skipped is None and source != "xcresulttool":
+                  skipped = 0
+
+          if None in (total, passed, failed, skipped):
+              source = "unparsed"
+
+          values = {
+              "TEST_TOTAL": "unknown" if total is None else str(total),
+              "TEST_PASSED": "unknown" if passed is None else str(passed),
+              "TEST_FAILED": "unknown" if failed is None else str(failed),
+              "TEST_SKIPPED": "unknown" if skipped is None else str(skipped),
+              "TEST_COUNT_SOURCE": source,
+          }
+          with open(env_path, "a", encoding="utf-8") as env:
+              for key, value in values.items():
+                  env.write(f"{key}={value}\n")
+          print("XCTest counts:", values)
+          PY
+
+      - name: Write step summary
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          summary_path = sys.argv[1]
+          env = os.environ
+
+          products = pathlib.Path(
+              env.get("IOS_DERIVED_DATA", ""),
+              "Build/Products/Debug-iphonesimulator",
+          )
+          app_binary = products / "LittleBitLoader.app/LittleBitLoader"
+          object_dir = pathlib.Path(
+              env.get("IOS_DERIVED_DATA", ""),
+              "Build/Intermediates.noindex/LittleBitLoader.build/Debug-iphonesimulator/"
+              "LittleBitLoader.build/Objects-normal/arm64",
+          )
+          neon_object = object_dir / "binary_packer_neon.o"
+          has_neon_object = neon_object.is_file()
+
+          candidates = []
+          for candidate in (
+              [app_binary]
+              + sorted(products.rglob("*.debug.dylib"))
+              + sorted(products.rglob("*.xctest"))
+          ):
+              if candidate.is_dir():
+                  candidate = candidate / candidate.name
+              if candidate.is_file() and candidate not in candidates:
+                  candidates.append(candidate)
+
+          arch_lines = []
+          symbol_hits = []
+          app_archs = ""
+          for index, binary in enumerate(candidates):
+              archs = subprocess.run(
+                  ["xcrun", "lipo", "-archs", str(binary)],
+                  check=False, capture_output=True, text=True,
+              ).stdout.strip()
+              arch_lines.append(f"{binary}: {archs or 'unknown'}")
+              if binary == app_binary:
+                  app_archs = archs
+              thin_binary = pathlib.Path(
+                  env.get("RUNNER_TEMP", ""), f"neon-check-{index}-arm64-thin"
+              )
+              thin = subprocess.run(
+                  ["xcrun", "lipo", "-thin", "arm64", str(binary), "-o", str(thin_binary)],
+                  check=False, capture_output=True, text=True,
+              )
+              target = thin_binary if thin.returncode == 0 and thin_binary.is_file() else binary
+              raw_symbols = subprocess.run(
+                  ["nm", "-a", str(target)],
+                  check=False, capture_output=True, text=True,
+              ).stdout
+              try:
+                  demangled = subprocess.run(
+                      ["c++filt"], input=raw_symbols,
+                      check=False, capture_output=True, text=True,
+                  ).stdout
+              except OSError:
+                  demangled = raw_symbols
+              if (
+                  "littlebit::bench::neon_variant_32" in demangled
+                  or "neon_variant_32" in raw_symbols
+              ):
+                  symbol_hits.append(f"{binary} ({archs or 'archs unknown'})")
+
+          if app_archs:
+              arm64_only = app_archs == "arm64"
+          elif arch_lines:
+              arm64_only = all(line.endswith("arm64") for line in arch_lines)
+          else:
+              arm64_only = False
+
+          if has_neon_object and symbol_hits and arm64_only:
+              neon_status = (
+                  "YES (arm64 object binary_packer_neon.o present; "
+                  "neon_variant_32 found in " + ", ".join(symbol_hits) + ")"
+              )
+          else:
+              missing = []
+              if not has_neon_object:
+                  missing.append(f"missing {neon_object}")
+              if not symbol_hits:
+                  missing.append(
+                      "neon_variant_32 not found via nm -a + c++filt in any "
+                      "app/debug-dylib/xctest Mach-O file"
+                  )
+              if not arm64_only:
+                  missing.append(f"unexpected app architectures: {app_archs or 'unknown'}")
+              neon_status = "NO / NOT PROVEN (" + "; ".join(missing) + ")"
+
+          print("NEON object:", neon_object, "present" if has_neon_object else "missing")
+          print("NEON Mach-O candidates:", arch_lines or ["none found"])
+          print("NEON symbol hits:", symbol_hits or ["none"])
+
+          lines = [
+              "## iOS Simulator CI",
+              f"- Xcode: {env.get('XCODE_VERSION', 'unknown')}",
+              f"- Simulator: {env.get('SIMULATOR_NAME', 'unknown')} (iOS {env.get('SIMULATOR_OS', 'unknown')})",
+              f"- Destination: `{env.get('DESTINATION', 'unknown')}`",
+          ]
+          if env.get("TEST_COUNT_SOURCE") == "unparsed":
+              raw_path = env.get("XCTEST_RAW_SUMMARY", "")
+              try:
+                  raw_text = pathlib.Path(raw_path).read_text(
+                      encoding="utf-8", errors="replace"
+                  ).strip()
+              except OSError:
+                  raw_text = "(no raw test summary text available)"
+              lines.append("- XCTest: counts unavailable; raw summary text:")
+              lines.append("  ```text")
+              lines.extend("  " + line for line in (raw_text.splitlines() or ["(empty)"])[:100])
+              lines.append("  ```")
+          else:
+              lines.append(
+                  f"- XCTest: run {env.get('TEST_TOTAL', 'unknown')}, "
+                  f"passed {env.get('TEST_PASSED', 'unknown')}, "
+                  f"failed {env.get('TEST_FAILED', 'unknown')}, "
+                  f"skipped {env.get('TEST_SKIPPED', 'unknown')} "
+                  f"(source: {env.get('TEST_COUNT_SOURCE', 'unknown')})"
+              )
+          lines.append(
+              f"- Unload lifecycle tests: {env.get('UNLOAD_TEST_RESULTS', 'not reported')}"
+          )
+          lines.extend([
+              f"- Build rc: {env.get('BUILD_RC', 'not-run')}; test rc: {env.get('TEST_RC', 'not-run')}",
+              f"- NEON kernel compiled in app target: {neon_status}",
+              f"  - NEON object: `{neon_object}` ({'present' if has_neon_object else 'missing'})",
+              f"  - Mach-O files checked: {', '.join(arch_lines) if arch_lines else 'none found'}",
+              f"  - `neon_variant_32` found in: {', '.join(symbol_hits) if symbol_hits else 'none'}",
+              "- Real-model tests: none in `ios/LittleBitLoaderTests`; model-backed load/generation checks are local-only (no weights downloaded or committed).",
+              "- Increased-memory-limit entitlement: not present; not changed in this CI-only commit.",
+          ])
+          with open(summary_path, "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Upload build log and XCTest result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-xcodebuild-log-and-xcresult
+          path: |
+            ${{ runner.temp }}/ios-xcodebuild.log
+            ${{ runner.temp }}/LittleBitTests.xcresult
+            ${{ runner.temp }}/xcresult_summary.json
+            ${{ runner.temp }}/xctest-summary.txt
+            ${{ runner.temp }}/unload-test-results.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  unsigned-ipa-optional:
+    name: Optional unsigned IPA (workflow_dispatch only)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode for archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IOS_ARCHIVE_LOG=$RUNNER_TEMP/ios-archive.log" >> "$GITHUB_ENV"
+          touch "$RUNNER_TEMP/ios-archive.log"
+          for candidate in \
+            "/Applications/Xcode_16.4.app" \
+            "/Applications/Xcode_16.3.app" \
+            "/Applications/Xcode.app"
+          do
+            if [ -d "$candidate" ]; then
+              sudo xcode-select -s "$candidate"
+              break
+            fi
+          done
+          echo "Selected Xcode path: $(xcode-select -p)"
+          xcodebuild -version | tee -a "$RUNNER_TEMP/ios-archive.log"
+
+      - name: Generate Xcode project and ephemeral scheme for archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dump_on_failure() {
+            python3 scripts/dump_pbxproj_context.py "$RUNNER_TEMP/xcodebuild-list.log" LittleBitLoader.xcodeproj/project.pbxproj
+          }
+          gate_xcodebuild_list() {
+            if ! xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"; then
+              dump_on_failure
+              return 1
+            fi
+          }
+
+          python3 scripts/generate_xcode_project.py
+          python3 scripts/validate_pbxproj.py LittleBitLoader.xcodeproj/project.pbxproj
+
+          echo "### pbxproj diagnostics (informational; never fails the job)"
+          set +e
+          echo "### head -c 300 project.pbxproj | xxd"
+          head -c 300 LittleBitLoader.xcodeproj/project.pbxproj | xxd
+          echo "### file project.pbxproj"
+          file LittleBitLoader.xcodeproj/project.pbxproj
+          echo "### plutil -lint LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -lint LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -lint exit: $?"
+          echo "### plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj"
+          plutil -convert json -o /dev/null LittleBitLoader.xcodeproj/project.pbxproj 2>&1
+          echo "plutil -convert json exit: $?"
+          echo "### xcodebuild -list -project LittleBitLoader.xcodeproj (diagnostic, stderr included)"
+          xcodebuild -list -project LittleBitLoader.xcodeproj 2>&1
+          echo "xcodebuild -list diagnostic exit: $?"
+          set -euo pipefail
+
+          gate_xcodebuild_list
+          python3 scripts/check_xcode_project.py
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          project = pathlib.Path("LittleBitLoader.xcodeproj")
+          pbx = (project / "project.pbxproj").read_text(encoding="utf-8")
+
+          def target_id(name: str) -> str:
+              pattern = (
+                  r"^\t\t([0-9A-F]{24}) /\* "
+                  + re.escape(name)
+                  + r" \*/ = \{\n\t\t\tisa = PBXNativeTarget;"
+              )
+              match = re.search(pattern, pbx, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"target not found in pbxproj: {name}")
+              return match.group(1)
+
+          app_id = target_id("LittleBitLoader")
+          test_id = target_id("LittleBitLoaderTests")
+
+          def ref(ident: str, buildable: str, blueprint: str) -> str:
+              return f'''<BuildableReference
+                  BuildableIdentifier = "primary"
+                  BlueprintIdentifier = "{ident}"
+                  BuildableName = "{buildable}"
+                  BlueprintName = "{blueprint}"
+                  ReferencedContainer = "container:LittleBitLoader.xcodeproj">
+                </BuildableReference>'''
+
+          scheme = f'''<?xml version="1.0" encoding="UTF-8"?>
+          <Scheme LastUpgradeVersion="1600" version="1.7">
+            <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+              <BuildActionEntries>
+                <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="YES" buildForAnalyzing="YES">
+                  {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+                </BuildActionEntry>
+                <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+                  {ref(test_id, "LittleBitLoaderTests.xctest", "LittleBitLoaderTests")}
+                </BuildActionEntry>
+              </BuildActionEntries>
+            </BuildAction>
+            <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
+              <Testables>
+                <TestableReference skipped="NO">
+                  {ref(test_id, "LittleBitLoaderTests.xctest", "LittleBitLoaderTests")}
+                </TestableReference>
+              </Testables>
+            </TestAction>
+            <LaunchAction buildConfiguration="Release" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+              </BuildableProductRunnable>
+            </LaunchAction>
+            <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                {ref(app_id, "LittleBitLoader.app", "LittleBitLoader")}
+              </BuildableProductRunnable>
+            </ProfileAction>
+            <AnalyzeAction buildConfiguration="Release"/>
+            <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
+          </Scheme>
+          '''
+          scheme_dir = project / "xcshareddata" / "xcschemes"
+          scheme_dir.mkdir(parents=True, exist_ok=True)
+          (scheme_dir / "LittleBitLoader.xcscheme").write_text(scheme, encoding="utf-8")
+          print("Generated ephemeral archive scheme")
+          PY
+
+      - name: Archive without signing and package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/LittleBitLoader.xcarchive"
+          ipa_root="$RUNNER_TEMP/unsigned-ipa"
+          rm -rf "$archive" "$ipa_root"
+          xcodebuild archive \
+            -project LittleBitLoader.xcodeproj \
+            -scheme LittleBitLoader \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee -a "$IOS_ARCHIVE_LOG"
+
+          app="$archive/Products/Applications/LittleBitLoader.app"
+          if [ ! -d "$app" ]; then
+            echo "archived app not found at $app" >&2
+            exit 1
+          fi
+          mkdir -p "$ipa_root/Payload"
+          cp -R "$app" "$ipa_root/Payload/LittleBitLoader.app"
+          (
+            cd "$ipa_root"
+            ditto -c -k --sequesterRsrc --keepParent Payload "$RUNNER_TEMP/LittleBitLoader-unsigned.ipa"
+          )
+          echo "Unsigned IPA: $RUNNER_TEMP/LittleBitLoader-unsigned.ipa"
+          echo "NOTE: this artifact is unsigned and is not installable on a device."
+
+      - name: Upload unsigned IPA and archive log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa-optional
+          path: |
+            ${{ runner.temp }}/LittleBitLoader-unsigned.ipa
+            ${{ runner.temp }}/LittleBitLoader.xcarchive
+            ${{ runner.temp }}/ios-archive.log
+          if-no-files-found: warn
+          retention-days: 7

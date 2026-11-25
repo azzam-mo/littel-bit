@@ -70,6 +70,7 @@ class LittleBitEngine: ObservableObject {
         let bridge = LittleBitEngineBridge.sharedInstance()
         bridge.loadModel(atPath: directoryURL.path, maxSeqLen: maxSeqLen) { [weak self] success, errorMsg in
             guard let self = self else { return }
+            guard bridge.state != .unloaded else { return } // deferred unload won teardown
             if success {
                 self.state = .ready
                 self.currentModelName = directoryURL.lastPathComponent
@@ -81,16 +82,25 @@ class LittleBitEngine: ObservableObject {
         }
     }
 
-    func unloadModel() {
-        LittleBitEngineBridge.sharedInstance().unloadModel()
+    private func stopModelAccess() {
         if didStartModelAccess {
             securityScopedModelURL?.stopAccessingSecurityScopedResource()
             didStartModelAccess = false
         }
         securityScopedModelURL = nil
-        self.state = .unloaded
-        self.currentModelName = "لا يوجد نموذج محدد"
-        self.currentModelPath = nil
+    }
+
+    func unloadModel() {
+        // The bridge calls back only after clear_cache() and model release have
+        // finished on the main queue, even if generation is still in flight.
+        LittleBitEngineBridge.sharedInstance().unloadModel(completion: { [weak self] in
+            guard let self = self else { return }
+            self.stopModelAccess()
+            self.state = .unloaded
+            self.currentModelName = "لا يوجد نموذج محدد"
+            self.currentModelPath = nil
+            self.lastErrorMessage = nil
+        })
     }
 
     func sendUserMessage(_ prompt: String, temperature: Float = 0.6, topP: Float = 0.95, maxTokens: Int = 256) {
@@ -115,21 +125,24 @@ class LittleBitEngine: ObservableObject {
         } completion: { [weak self] metrics in
             guard let self = self else { return }
             self.isGenerating = false
-            self.state = .ready
-            if let m = metrics {
-                self.loadTimeMs = m.loadTimeMs
-                self.ttftMs = m.ttftMs
-                self.tokensPerSecond = m.tokensPerSecond
-                self.kvCacheMB = m.kvCacheMB
-                self.ramUsedMB = m.residentMemoryMB
+            if bridge.state != .unloaded {
+                self.state = .ready
             }
+            self.loadTimeMs = metrics.loadTimeMs
+            self.ttftMs = metrics.ttftMs
+            self.tokensPerSecond = metrics.tokensPerSecond
+            self.kvCacheMB = metrics.kvCacheMB
+            self.ramUsedMB = metrics.residentMemoryMB
         }
     }
 
     func stopGeneration() {
-        LittleBitEngineBridge.sharedInstance().stopGeneration()
+        let bridge = LittleBitEngineBridge.sharedInstance()
+        bridge.stopGeneration()
         self.isGenerating = false
-        self.state = .ready
+        if bridge.state != .unloaded {
+            self.state = .ready
+        }
     }
 
     func clearChat() {

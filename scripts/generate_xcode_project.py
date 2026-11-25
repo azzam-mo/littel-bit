@@ -45,6 +45,7 @@ BRIDGE_HEADERS = [
     "ios/LittleBitLoader/LittleBitLoader-Bridging-Header.h",
 ]
 INFO_PLIST = "ios/LittleBitLoader/Info.plist"
+APP_ENTITLEMENTS = "ios/LittleBitLoader/LittleBitLoader.entitlements"
 TEST_SWIFT = ["ios/LittleBitLoaderTests/EngineSmokeTests.swift"]
 
 _counter = 0
@@ -74,22 +75,22 @@ def file_type(path):
     return "text"
 
 
-def group(children, name, path=""):
+def group(children, name):
     gid = uid()
     entries = " ".join(f"{c} /* {n} */," for c, n in children)
-    path_line = f"\n\t\t\tpath = {q(path)};" if path else ""
     return gid, (
         f"\t\t{gid} /* {name} */ = {{\n"
         f"\t\t\tisa = PBXGroup;\n"
         f"\t\t\tchildren = (\n\t\t\t\t{entries}\n\t\t\t);\n"
-        f"\t\t\tsourceTree = \"<group>\";{path_line}\n"
+        f"\t\t\tsourceTree = \"<group>\";\n"
         f"\t\t}};\n"
     )
 
 
 def main():
     missing = [p for p in APP_SWIFT + BRIDGE_MM + ENGINE_CPP + ENGINE_HEADERS +
-               BRIDGE_HEADERS + [INFO_PLIST] + TEST_SWIFT if not os.path.isfile(os.path.join(ROOT, p))]
+               BRIDGE_HEADERS + [INFO_PLIST, APP_ENTITLEMENTS] + TEST_SWIFT
+               if not os.path.isfile(os.path.join(ROOT, p))]
     if missing:
         print("Missing source files:", *missing, sep="\n  ")
         return 1
@@ -102,11 +103,10 @@ def main():
         fid = uid()
         file_refs[path] = fid
         name = os.path.basename(path)
-        src_tree = '<group>' if path != INFO_PLIST or True else '<group>'
         lines.append(
             f"\t\t{fid} /* {name} */ = {{isa = PBXFileReference; "
             f"lastKnownFileType = {file_type(path)}; "
-            f"path = {q(path)}; sourceTree = {q(src_tree)}; }};\n"
+            f"path = {q(path)}; sourceTree = \"<group>\"; }};\n"
         )
 
     foundation_ref = uid()
@@ -139,9 +139,9 @@ def main():
         return (file_refs[path], os.path.basename(path))
 
     app_group, app_group_def = group([ref_node(p) for p in APP_SWIFT + BRIDGE_MM + BRIDGE_HEADERS + [INFO_PLIST]],
-                                     "App", "ios/LittleBitLoader")
-    engine_group, engine_group_def = group([ref_node(p) for p in ENGINE_CPP + ENGINE_HEADERS], "Engine", ".")
-    tests_group, tests_group_def = group([ref_node(p) for p in TEST_SWIFT], "Tests", "ios/LittleBitLoaderTests")
+                                     "App")
+    engine_group, engine_group_def = group([ref_node(p) for p in ENGINE_CPP + ENGINE_HEADERS], "Engine")
+    tests_group, tests_group_def = group([ref_node(p) for p in TEST_SWIFT], "Tests")
     frameworks_group, frameworks_group_def = group(
         [(foundation_ref, "Foundation.framework"), (xctest_ref, "XCTest.framework")], "Frameworks")
     products_group, products_group_def = group(
@@ -224,8 +224,8 @@ def main():
 
     development_team = os.environ.get("DEVELOPMENT_TEAM", "").strip()
     common_settings = [
-        "CLANG_CXX_LANGUAGE_STANDARD = c++17;",
-        "CLANG_CXX_LIBRARY = libc++;",
+        "CLANG_CXX_LANGUAGE_STANDARD = \"c++17\";",
+        "CLANG_CXX_LIBRARY = \"libc++\";",
         "CLANG_ENABLE_MODULES = YES;",
         "CLANG_ENABLE_OBJC_ARC = YES;",
         "GCC_PRECOMPILE_PREFIX_HEADER = NO;",
@@ -246,8 +246,9 @@ def main():
         f"\t\t\tbuildSettings = {{\n"
         + "".join(f"\t\t\t\t{s}\n" for s in [
             *common_settings,
-            "ARCHS[sdk=iphoneos*] = arm64;",
+            "\"ARCHS[sdk=iphoneos*]\" = arm64;",
             "CODE_SIGN_STYLE = Automatic;",
+            f"CODE_SIGN_ENTITLEMENTS = {q(APP_ENTITLEMENTS)};",
             "ENABLE_TESTABILITY = YES;",
             f"INFOPLIST_FILE = {q(INFO_PLIST)};",
             "PRODUCT_BUNDLE_IDENTIFIER = com.littlebit.loader;",

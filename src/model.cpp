@@ -634,7 +634,8 @@ PerformanceMetrics Qwen3Model::generate(
     size_t max_new_tokens,
     float temperature,
     float top_p,
-    std::function<bool(int32_t, const std::string&)> on_token
+    std::function<bool(int32_t, const std::string&)> on_token,
+    std::function<bool()> should_cancel
 ) {
     PerformanceMetrics metrics;
     metrics.load_time_ms = last_load_time_ms;
@@ -652,6 +653,11 @@ PerformanceMetrics Qwen3Model::generate(
     const float* logits = nullptr;
     size_t prefill_len = std::min(input_tokens.size(), config.max_seq_len);
     for (size_t i = 0; i < prefill_len; ++i) {
+        // Defaulted probe: existing callers pass nothing and are unaffected.
+        // The bridge uses this to observe an unload requested during prefill.
+        if (should_cancel && should_cancel()) {
+            return metrics;
+        }
         logits = forward_token(input_tokens[i], i);
     }
     if (!logits) {
@@ -666,6 +672,9 @@ PerformanceMetrics Qwen3Model::generate(
     int32_t next_token = sample_temperature_top_p(logits, config.vocab_size, temperature, top_p);
 
     for (size_t gen_i = 0; gen_i < max_new_tokens; ++gen_i) {
+        if (should_cancel && should_cancel()) {
+            break;
+        }
         metrics.tokens_generated++;
 
         std::string token_str = tokenizer.decode(next_token);

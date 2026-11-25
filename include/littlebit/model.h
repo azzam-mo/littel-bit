@@ -79,7 +79,8 @@ public:
         size_t max_new_tokens = 128,
         float temperature = 0.6f,
         float top_p = 0.95f,
-        std::function<bool(int32_t token_id, const std::string& token_str)> on_token = nullptr
+        std::function<bool(int32_t token_id, const std::string& token_str)> on_token = nullptr,
+        std::function<bool()> should_cancel = nullptr
     );
 
     void clear_cache();
