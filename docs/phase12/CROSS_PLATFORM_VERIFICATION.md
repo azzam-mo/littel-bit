@@ -1,5 +1,16 @@
 # Phase 12 — Cross-Platform Verification
 
+> **Autonomous-completion update (2026-11-25):** This file is retained as the
+> historical verification snapshot written before the branch was pushed. The
+> branch was subsequently pushed to `origin/phase12-ios-device-validation` at
+> `3ba0b91`, and AArch64 binaries were executed locally under QEMU user-mode:
+> Test 7 = 15,960, Test 7c = 308 across 7 kernels, and CTest = 9/9. That is
+> **AArch64 under emulation**, not native ARM64 hardware, macOS, or iPhone.
+> No Actions run URLs could be observed because the API/web endpoints return
+> 404 anonymously and `gh` is unauthenticated. The current authoritative
+> status is `docs/phase12/FINAL_COMPLETION_REPORT.md`; the tables below remain
+> accurate for the earlier snapshot only.
+
 ## 1. Commit and external-run status
 
 | Item | Value |

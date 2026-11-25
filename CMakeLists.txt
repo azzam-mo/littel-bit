@@ -95,6 +95,12 @@ add_dependencies(test_model_inference tiny_model_fixture)
 target_link_libraries(test_model_inference PRIVATE littlebit_engine)
 add_test(NAME test_model_inference COMMAND test_model_inference "${TINY_MODEL_DIR}")
 
+# In-process repeated load/prefill/cache-clear/scope-exit memory probe.
+add_executable(memory_cycle_probe tests/memory_cycle_probe.cpp)
+add_dependencies(memory_cycle_probe tiny_model_fixture)
+target_link_libraries(memory_cycle_probe PRIVATE littlebit_engine)
+add_test(NAME memory_cycle_probe COMMAND memory_cycle_probe "${TINY_MODEL_DIR}")
+
 # Standalone probes for validating real weights / tokenizer against independent references.
 add_executable(model_probe tests/model_probe.cpp)
 target_link_libraries(model_probe PRIVATE littlebit_engine)

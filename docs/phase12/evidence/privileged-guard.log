@@ -1,0 +1,4 @@
+BLOCKED: privileged IPA signing requires explicit authorization with an
+Apple-issued identity and a provisioning profile that permits com.apple.developer.kernel.increased-memory-limit.
+This repository does not contain those credentials. Do not use the
+AltStore-compatible source IPA to claim this entitlement.

@@ -1,0 +1,6 @@
+yaml_safe_load=4/4
+workflow_run_blocks_bash_n=37/37
+packaging_scripts_bash_n=2/2
+privileged_plist_key=com.apple.developer.kernel.increased-memory-limit=true
+altstore_plist_keys=[]
+git_diff_check=PASS

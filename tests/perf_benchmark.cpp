@@ -72,6 +72,16 @@ CpuTime read_cpu_time() {
     return t;
 }
 
+size_t peak_rss_mb() {
+#if defined(__linux__)
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        return static_cast<size_t>(ru.ru_maxrss / 1024);
+    }
+#endif
+    return 0;
+}
+
 size_t linear_bytes(const littlebit::LittleBitLinear& lin) {
     size_t n = 0;
     auto add_i32 = [&](const std::vector<int32_t>& v) { n += v.size() * sizeof(int32_t); };
@@ -401,6 +411,7 @@ int main(int argc, char** argv) {
 
     littlebit::Qwen3Model model;
     if (!model.load(model_dir, max_seq)) return 3;
+    const size_t rss_after_load_mb = littlebit::Qwen3Model::get_current_rss_mb();
 
     const size_t threads = thread_count();
     const auto cpu0 = read_cpu_time();
@@ -434,6 +445,7 @@ int main(int argc, char** argv) {
         }
     }
     const double ttft_ms = tokenize_ms + prefill_engine_ms;
+    const size_t rss_after_prefill_mb = littlebit::Qwen3Model::get_current_rss_mb();
 
     size_t pos = prefill_len;
     double greedy_ms = 0.0;
@@ -459,6 +471,7 @@ int main(int argc, char** argv) {
         }
         ++pos;
     }
+    const size_t rss_after_decode_mb = littlebit::Qwen3Model::get_current_rss_mb();
     acc.greedy_ms = greedy_ms;
     acc.top_p_ms = top_p_ms;
 
@@ -479,6 +492,12 @@ int main(int argc, char** argv) {
     const auto cpu1 = read_cpu_time();
     const double wall_ms = elapsed_ms(wall0, wall1);
     const double cpu_ms = (cpu1.user_ms - cpu0.user_ms) + (cpu1.sys_ms - cpu0.sys_ms);
+
+    const auto clear_start = Clock::now();
+    model.clear_cache();
+    const double clear_cache_ms = elapsed_ms(clear_start, Clock::now());
+    const size_t rss_after_clear_mb = littlebit::Qwen3Model::get_current_rss_mb();
+    const size_t peak_rss_mb_value = peak_rss_mb();
 
     std::vector<uint64_t> proj_bytes(7, 0);
     const char* proj_names[] = {"q", "k", "v", "o", "gate", "up", "down"};
@@ -519,7 +538,18 @@ int main(int argc, char** argv) {
     j["wall_ms"] = std::to_string(wall_ms);
     j["cpu_ms"] = std::to_string(cpu_ms);
     j["cpu_util_pct_of_one_core"] = std::to_string(100.0 * cpu_ms / std::max(1e-9, wall_ms));
-    j["rss_mb"] = std::to_string(littlebit::Qwen3Model::get_current_rss_mb());
+    j["rss_after_load_mb"] = std::to_string(rss_after_load_mb);
+    j["rss_after_prefill_mb"] = std::to_string(rss_after_prefill_mb);
+    j["rss_after_decode_mb"] = std::to_string(rss_after_decode_mb);
+    j["rss_after_clear_cache_mb"] = std::to_string(rss_after_clear_mb);
+    j["peak_rss_mb"] = std::to_string(peak_rss_mb_value);
+    j["clear_cache_ms"] = std::to_string(clear_cache_ms);
+    j["decode_tokens_per_sec"] = std::to_string(
+        decode_engine_ms > 0.0
+            ? 1000.0 * static_cast<double>(decode_tokens.size()) / decode_engine_ms
+            : 0.0
+    );
+    j["rss_mb"] = std::to_string(rss_after_decode_mb);
     j["sampled_id"] = std::to_string(sampled);
 
     auto put_ms = [&](const char* key, double v) { j[key] = std::to_string(v); };
@@ -583,5 +613,16 @@ int main(int argc, char** argv) {
               << " ttft_ms=" << ttft_ms << " decode_ms_per_token=" << decode_engine_ms / std::max<size_t>(1, decode_tokens.size())
               << " replay_logit_max_abs=" << acc.logit_check_max_abs << '\n';
     std::cout << "[PROFILE] json=" << json_out << '\n';
+    std::cout << "[MEMORY] rss_after_load_mb=" << rss_after_load_mb
+              << " rss_after_prefill_mb=" << rss_after_prefill_mb
+              << " rss_after_decode_mb=" << rss_after_decode_mb
+              << " rss_after_clear_cache_mb=" << rss_after_clear_mb
+              << " peak_rss_mb=" << peak_rss_mb_value << '\n';
+    std::cout << "[LIFECYCLE] clear_cache_ms=" << clear_cache_ms
+              << " decode_tokens_per_sec="
+              << (decode_engine_ms > 0.0
+                      ? 1000.0 * static_cast<double>(decode_tokens.size()) / decode_engine_ms
+                      : 0.0)
+              << '\n';
     return 0;
 }

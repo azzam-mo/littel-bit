@@ -1,0 +1,14 @@
+$ uname -m
+x86_64
+$ command -v xcodebuild codesign plutil lipo security swiftc
+xcodebuild=codesign=plutil=/usr/bin/plutil
+lipo=security=swiftc=$ gh auth status
+You are not logged into any GitHub hosts. To log in, run: gh auth login
+gh_auth_rc=1
+$ git ls-remote --heads origin refs/heads/phase12-ios-device-validation
+3ba0b911186fece879205e89a404b2750354dc33	refs/heads/phase12-ios-device-validation
+ls_remote_rc=0
+http_code=404 url=https://api.github.com/repos/azzam-mo/littel-bit/actions/runs?per_page=5
+http_code=404 url=https://api.github.com/repos/azzam-mo/littel-bit/actions/workflows
+http_code=404 url=https://github.com/azzam-mo/littel-bit/actions
+http_code=404 url=https://github.com/azzam-mo/littel-bit/actions/workflows/arm64-neon.yml/badge.svg

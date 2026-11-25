@@ -1,5 +1,12 @@
 # Phase 12 follow-up — NEON4 root cause, packaging split, and validation evidence
 
+> **Autonomous-completion update (2026-11-25):** The branch was pushed at
+> `3ba0b91`, and an AArch64 Linux ELF was executed under QEMU user-mode with
+> Test 7 = 15,960, Test 7c = 308/7 kernels, and CTest = 9/9. This verifies the
+> fix on real AArch64 instructions but is not native ARM64 hardware or an
+> iPhone. The current decision and raw evidence are in
+> `docs/phase12/FINAL_COMPLETION_REPORT.md` and `docs/phase12/evidence/`.
+
 ## Status summary
 
 | Check | Result |

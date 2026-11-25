@@ -1,0 +1,23 @@
+Test project /home/mrdp_24193/.cache/littlebit-phase12/build-arm64
+    Start 1: test_binary_packer
+1/9 Test #1: test_binary_packer ...............   Passed    2.30 sec
+    Start 2: test_littlebit_linear
+2/9 Test #2: test_littlebit_linear ............   Passed    0.05 sec
+    Start 3: test_safetensors
+3/9 Test #3: test_safetensors .................   Passed    0.06 sec
+    Start 4: test_tokenizer
+4/9 Test #4: test_tokenizer ...................   Passed    2.47 sec
+    Start 5: test_ops
+5/9 Test #5: test_ops .........................   Passed    0.04 sec
+    Start 6: test_transformer_block
+6/9 Test #6: test_transformer_block ...........   Passed    0.05 sec
+    Start 7: check_xcode_project
+7/9 Test #7: check_xcode_project ..............   Passed    0.08 sec
+    Start 8: test_model_inference
+8/9 Test #8: test_model_inference .............   Passed    0.18 sec
+    Start 9: memory_cycle_probe
+9/9 Test #9: memory_cycle_probe ...............   Passed    0.14 sec
+
+100% tests passed out of 9
+
+Total Test time (real) =   5.38 sec

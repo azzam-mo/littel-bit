@@ -1,5 +1,13 @@
 # Phase 12 — Real iPhone Test Log
 
+> **Autonomous-completion update (2026-11-25):** P12-R07 was later executed
+> against an AArch64 Linux ELF under QEMU user-mode with Test 7c = 308 cases
+> across 7 kernels and `first divergent intermediate: none`; CTest reached 9/9.
+> This is not native ARM64 hardware, macOS, or iPhone evidence. Every T01–T11
+> record below remains `BLOCKED`. See
+> `docs/phase12/FINAL_COMPLETION_REPORT.md` for the current decision and
+> platform-labeled evidence.
+
 هذا الملف هو سجل نتائج الجهاز الحقيقي. لم تُنفذ أي اختبارات على iPhone في بيئة العمل الحالية، لذلك كل السجلات أدناه `BLOCKED`. لا تُغيّر الحالة إلى `PASS` إلا بعد تنفيذ الاختبار فعليًا على جهاز موصول وإرفاق الدليل المطلوب.
 
 ## Environment prerequisites

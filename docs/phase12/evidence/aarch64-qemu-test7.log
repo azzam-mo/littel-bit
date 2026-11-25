@@ -1,0 +1,10 @@
+[TEST] Running binary_packer unit tests...
+  ✓ Test 1: 8-element row packing & unpacking passed.
+  ✓ Test 2: (5 x 50) matrix pack & unpack roundtrip passed.
+  ✓ Test 3: Direct binary_matvec_mult matches ground truth.
+  ✓ Test 4: Transposed binary_matvec_mult_transposed matches ground truth.
+  ✓ Test 5: binary_matvec_mult edge cases are bit-exact vs reference.
+  ✓ Test 7c: NEON4 tail regression (308 cases across 7 kernels; first divergent intermediate: none).
+  ✓ Test 7: ARM64 NEON variants (15960 shape/pattern cases across 7 kernels) bit-exact incl. tails and NaN payloads.
+  ✓ Test 7b: explicit both-NaN sum/x pairs (14 raw-bit checks across 7 kernels) bit-exact for add and sub.
+All binary_packer unit tests passed successfully!

@@ -1,0 +1,25 @@
+[MODEL] Loaded config: 1 layers, hidden=32, vocab=256
+Tokenizer: Cannot open tokenizer.json: /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/build/tiny-model/tokenizer.json
+[MODEL] LittleBit validation OK: 7 linears, residual=no
+[MODEL] Memory-mapped embedding table: 256x32
+[MODEL] Memory-mapped lm_head table: 256x32
+[MODEL] Successfully loaded in 0.000829733s. Current RSS: 4 MB
+[CYCLE] cycle=0 rss_after_load_mb=4 rss_after_prefill_mb=4 rss_after_clear_mb=4 peak_rss_mb=4
+[CYCLE] cycle=0 rss_after_scope_exit_mb=4 peak_rss_mb=4
+[MODEL] Loaded config: 1 layers, hidden=32, vocab=256
+Tokenizer: Cannot open tokenizer.json: /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/build/tiny-model/tokenizer.json
+[MODEL] LittleBit validation OK: 7 linears, residual=no
+[MODEL] Memory-mapped embedding table: 256x32
+[MODEL] Memory-mapped lm_head table: 256x32
+[MODEL] Successfully loaded in 0.000377562s. Current RSS: 4 MB
+[CYCLE] cycle=1 rss_after_load_mb=4 rss_after_prefill_mb=4 rss_after_clear_mb=4 peak_rss_mb=4
+[CYCLE] cycle=1 rss_after_scope_exit_mb=4 peak_rss_mb=4
+[MODEL] Loaded config: 1 layers, hidden=32, vocab=256
+Tokenizer: Cannot open tokenizer.json: /home/mrdp_24193/.gemini/antigravity/scratch/LittleBit-Loader/build/tiny-model/tokenizer.json
+[MODEL] LittleBit validation OK: 7 linears, residual=no
+[MODEL] Memory-mapped embedding table: 256x32
+[MODEL] Memory-mapped lm_head table: 256x32
+[MODEL] Successfully loaded in 0.000353302s. Current RSS: 4 MB
+[CYCLE] cycle=2 rss_after_load_mb=4 rss_after_prefill_mb=4 rss_after_clear_mb=4 peak_rss_mb=4
+[CYCLE] cycle=2 rss_after_scope_exit_mb=4 peak_rss_mb=4
+[CYCLE] completed cycles=3 final_rss_mb=4 peak_rss_mb=4

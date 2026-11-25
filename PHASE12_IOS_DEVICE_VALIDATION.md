@@ -1,5 +1,14 @@
 # Phase 12 — Real iOS Device Validation
 
+> **Autonomous-completion update (2026-11-25):** The branch was pushed to
+> `origin/phase12-ios-device-validation` at `3ba0b91`; later commits were added
+> during the completion pass. AArch64 NEON Test 7/7c and the full CTest suite
+> were executed locally under QEMU user-mode (9/9, 15,960 cases, 308 cases
+> across 7 kernels). This is emulation, not native ARM64, macOS, or iPhone.
+> No Actions run URLs were observable and T01–T11 remain blocked. The current
+> authoritative report is `docs/phase12/FINAL_COMPLETION_REPORT.md`; this
+> document is retained for its earlier audit trail.
+
 ## 0. القواعد الالتزامية
 
 - تم فحص حالة Git والفرع **قبل أي تعديل**.
