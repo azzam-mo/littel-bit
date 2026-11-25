@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <dispatch/dispatch.h>
 #include <sys/qos.h>
@@ -41,6 +42,7 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     std::atomic<bool> _cancelGeneration;
     std::atomic<bool> _busy;
     std::atomic<bool> _pendingUnload;
+    std::mutex _lifecycleMutex;
     std::string _pendingUTF8;
     NSMutableArray* _pendingUnloadCompletions;
 }
@@ -49,6 +51,7 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
 @property (nonatomic, readwrite, nullable) NSString* lastError;
 - (void)teardownModelOnMainQueue;
 - (void)drainPendingUnloadOnMainQueue;
+- (void)finishBusyOperationOnMainQueue;
 @end
 
 @implementation LittleBitEngineBridge
@@ -113,15 +116,43 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     _cancelGeneration = false;
 }
 
-// Drains every unload requested while an operation held _busy. A completion
-// may request another unload; the loop keeps _busy held until all are done.
+// Drains every unload requested while an operation held _busy. The mutex keeps
+// the pending flag and completion list consistent with unloadModelWithCompletion
+// even if that call arrives while a main-queue completion is already running.
 - (void)drainPendingUnloadOnMainQueue {
-    while (_pendingUnload.exchange(false)) {
+    while (true) {
+        NSArray* completions = nil;
+        {
+            std::lock_guard<std::mutex> lock(_lifecycleMutex);
+            if (!_pendingUnload.exchange(false)) {
+                break;
+            }
+            completions = [_pendingUnloadCompletions copy];
+            [_pendingUnloadCompletions removeAllObjects];
+        }
         [self teardownModelOnMainQueue];
-        NSArray* completions = [_pendingUnloadCompletions copy];
-        [_pendingUnloadCompletions removeAllObjects];
         for (dispatch_block_t block in completions) {
             if (block) block();
+        }
+    }
+}
+
+// Clears _busy only after all pending teardown and callbacks are done. The
+// final pending check and gate release share one lock, so a late unload cannot
+// slip between them.
+- (void)finishBusyOperationOnMainQueue {
+    while (true) {
+        [self drainPendingUnloadOnMainQueue];
+        BOOL pending = NO;
+        {
+            std::lock_guard<std::mutex> lock(_lifecycleMutex);
+            pending = _pendingUnload.load();
+            if (!pending) {
+                _busy = false;
+            }
+        }
+        if (!pending) {
+            break;
         }
     }
 }
@@ -129,7 +160,14 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
 - (void)loadModelAtPath:(NSString*)modelDirPath 
              maxSeqLen:(NSInteger)maxSeqLen 
             completion:(void (^)(BOOL success, NSString* _Nullable errorMsg))completion {
-    if (_busy.exchange(true)) {
+    BOOL rejected = NO;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycleMutex);
+        if (_pendingUnload.load() || _busy.exchange(true)) {
+            rejected = YES;
+        }
+    }
+    if (rejected) {
         if (completion) completion(NO, @"Another model operation is in progress.");
         return;
     }
@@ -142,7 +180,11 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
         bool ok = self->_model->load(cppPath, static_cast<size_t>(maxSeqLen));
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            BOOL deferredUnload = _pendingUnload.load();
+            BOOL deferredUnload = NO;
+            {
+                std::lock_guard<std::mutex> lock(_lifecycleMutex);
+                deferredUnload = _pendingUnload.load();
+            }
             if (deferredUnload) {
                 [self drainPendingUnloadOnMainQueue];
                 if (completion) completion(NO, @"Model load was cancelled by unload.");
@@ -155,8 +197,8 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
                 self.lastError = @"Failed to load model weights or config files.";
                 if (completion) completion(NO, self.lastError);
             }
-            // Release the gate only after teardown and callbacks are finished.
-            _busy = false;
+            // Also drains an unload requested by the completion callback.
+            [self finishBusyOperationOnMainQueue];
         });
     });
 }
@@ -166,19 +208,23 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
 }
 
 - (void)unloadModelWithCompletion:(void (^)(void))completion {
-    if (_busy.exchange(true)) {
-        // Never free the model while a background forward pass or load is
-        // using it. The owning operation drains this on the main queue.
+    BOOL wasBusy = NO;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycleMutex);
+        wasBusy = _busy.exchange(true);
         _cancelGeneration = true;
         _pendingUnload = true;
         if (completion) [_pendingUnloadCompletions addObject:[completion copy]];
+    }
+    if (wasBusy) {
+        // Never free the model while a background forward pass or load is
+        // using it. The owning operation drains this on the main queue.
         return;
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self teardownModelOnMainQueue];
-        if (completion) completion();
-        _busy = false;
+        [self drainPendingUnloadOnMainQueue];
+        [self finishBusyOperationOnMainQueue];
     });
 }
 
@@ -188,7 +234,14 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
           maxNewTokens:(NSInteger)maxNewTokens
                onToken:(BOOL (^)(NSString* tokenStr))onToken
             completion:(void (^)(EnginePerformanceMetrics* metrics))completion {
-    if (self.state != EngineStateReady || _busy.exchange(true)) {
+    BOOL rejected = NO;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycleMutex);
+        if (self.state != EngineStateReady || _pendingUnload.load() || _busy.exchange(true)) {
+            rejected = YES;
+        }
+    }
+    if (rejected) {
         if (completion) {
             EnginePerformanceMetrics* empty = [[EnginePerformanceMetrics alloc] init];
             completion(empty);
@@ -246,7 +299,12 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
 
         _pendingUTF8.clear();
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (_pendingUnload.load()) {
+            BOOL deferredUnload = NO;
+            {
+                std::lock_guard<std::mutex> lock(_lifecycleMutex);
+                deferredUnload = _pendingUnload.load();
+            }
+            if (deferredUnload) {
                 [self drainPendingUnloadOnMainQueue];
             } else {
                 self.state = EngineStateReady;
@@ -254,7 +312,7 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
             // Swift checks bridge.state before forcing .ready in its UI model.
             if (completion) completion(res);
             // Gate must stay closed until after deferred teardown and callbacks.
-            _busy = false;
+            [self finishBusyOperationOnMainQueue];
         });
     });
 }
