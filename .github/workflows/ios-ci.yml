@@ -334,6 +334,7 @@ jobs:
         run: |
           set -uo pipefail
           summary_json="$RUNNER_TEMP/xcresult_summary.json"
+          raw_summary="$RUNNER_TEMP/xctest-summary.txt"
           : > "$summary_json"
           if [ -d "$IOS_RESULT_BUNDLE" ]; then
             set +e
@@ -346,12 +347,21 @@ jobs:
             echo "No .xcresult bundle was produced."
           fi
 
-          python3 - "$summary_json" "$GITHUB_ENV" <<'PY'
+          {
+            echo "### xcresulttool get test-results summary"
+            if [ -s "$summary_json" ]; then cat "$summary_json"; else echo "(empty)"; fi
+            echo "### Executed-tests lines from xcodebuild log"
+            grep -E 'Executed [0-9]+ tests?, with [0-9]+ failures?' "$IOS_BUILD_LOG" || true
+          } > "$raw_summary"
+          echo "XCTEST_RAW_SUMMARY=$raw_summary" >> "$GITHUB_ENV"
+
+          python3 - "$summary_json" "$GITHUB_ENV" "$IOS_BUILD_LOG" "$raw_summary" <<'PY'
           import json
           import os
+          import re
           import sys
 
-          summary_path, env_path = sys.argv[1], sys.argv[2]
+          summary_path, env_path, log_path, raw_path = sys.argv[1:5]
 
           def as_int(value):
               if isinstance(value, dict):
@@ -383,23 +393,60 @@ jobs:
                           return number
               return None
 
-          total = failed = skipped = None
+          def first_not_none(*values):
+              for value in values:
+                  if value is not None:
+                      return value
+              return None
+
+          # Xcode 16.3+ emits totalTestCount/passedTests/failedTests/skippedTests.
+          # Older xcresult JSON used testsCount/testFailureCount/testSkippedCount.
+          total = failed = skipped = passed = None
+          source = "unparsed"
           if os.path.getsize(summary_path):
               try:
                   with open(summary_path, encoding="utf-8") as fh:
                       data = json.load(fh)
-                  total = find_metric(data, {"testsCount"})
-                  failed = find_metric(data, {"testFailureCount"})
-                  skipped = find_metric(data, {"testSkippedCount"})
+                  total = find_metric(data, {"totalTestCount", "testsCount"})
+                  passed = find_metric(data, {"passedTests"})
+                  failed = find_metric(data, {"failedTests", "testFailureCount"})
+                  skipped = find_metric(data, {"skippedTests", "testSkippedCount"})
+                  if None not in (total, failed):
+                      source = "xcresulttool"
               except (OSError, ValueError) as exc:
                   print(f"Could not parse xcresult summary: {exc}")
 
-          passed = total - failed - skipped if None not in (total, failed, skipped) else None
+          if total is None or failed is None:
+              try:
+                  with open(log_path, encoding="utf-8", errors="replace") as fh:
+                      log_text = fh.read()
+                  match = re.search(
+                      r"Executed\s+(\d+)\s+tests?,\s+with\s+(\d+)\s+failures?",
+                      log_text,
+                  )
+                  if match:
+                      log_total, log_failed = int(match.group(1)), int(match.group(2))
+                      total = first_not_none(total, log_total)
+                      failed = first_not_none(failed, log_failed)
+                      source = "build-log" if source == "unparsed" else source + "+build-log"
+              except OSError as exc:
+                  print(f"Could not read xcodebuild log: {exc}")
+
+          if passed is None and total is not None and failed is not None:
+              skipped_for_calc = skipped if skipped is not None else 0
+              passed = total - failed - skipped_for_calc
+              if skipped is None and source != "xcresulttool":
+                  skipped = 0
+
+          if None in (total, passed, failed, skipped):
+              source = "unparsed"
+
           values = {
               "TEST_TOTAL": "unknown" if total is None else str(total),
               "TEST_PASSED": "unknown" if passed is None else str(passed),
               "TEST_FAILED": "unknown" if failed is None else str(failed),
               "TEST_SKIPPED": "unknown" if skipped is None else str(skipped),
+              "TEST_COUNT_SOURCE": source,
           }
           with open(env_path, "a", encoding="utf-8") as env:
               for key, value in values.items():
@@ -421,10 +468,11 @@ jobs:
           summary_path = sys.argv[1]
           env = os.environ
 
-          app_binary = pathlib.Path(
+          products = pathlib.Path(
               env.get("IOS_DERIVED_DATA", ""),
-              "Build/Products/Debug-iphonesimulator/LittleBitLoader.app/LittleBitLoader",
+              "Build/Products/Debug-iphonesimulator",
           )
+          app_binary = products / "LittleBitLoader.app/LittleBitLoader"
           object_dir = pathlib.Path(
               env.get("IOS_DERIVED_DATA", ""),
               "Build/Intermediates.noindex/LittleBitLoader.build/Debug-iphonesimulator/"
@@ -433,53 +481,117 @@ jobs:
           neon_object = object_dir / "binary_packer_neon.o"
           has_neon_object = neon_object.is_file()
 
-          archs = ""
-          has_symbol = False
-          if app_binary.is_file():
+          candidates = []
+          for candidate in (
+              [app_binary]
+              + sorted(products.rglob("*.debug.dylib"))
+              + sorted(products.rglob("*.xctest"))
+          ):
+              if candidate.is_dir():
+                  candidate = candidate / candidate.name
+              if candidate.is_file() and candidate not in candidates:
+                  candidates.append(candidate)
+
+          arch_lines = []
+          symbol_hits = []
+          app_archs = ""
+          for index, binary in enumerate(candidates):
               archs = subprocess.run(
-                  ["xcrun", "lipo", "-archs", str(app_binary)],
+                  ["xcrun", "lipo", "-archs", str(binary)],
                   check=False, capture_output=True, text=True,
               ).stdout.strip()
-              thin_binary = pathlib.Path(env.get("RUNNER_TEMP", ""), "LittleBitLoader-arm64-thin")
+              arch_lines.append(f"{binary}: {archs or 'unknown'}")
+              if binary == app_binary:
+                  app_archs = archs
+              thin_binary = pathlib.Path(
+                  env.get("RUNNER_TEMP", ""), f"neon-check-{index}-arm64-thin"
+              )
               thin = subprocess.run(
-                  ["xcrun", "lipo", "-thin", "arm64", str(app_binary), "-o", str(thin_binary)],
+                  ["xcrun", "lipo", "-thin", "arm64", str(binary), "-o", str(thin_binary)],
                   check=False, capture_output=True, text=True,
               )
-              if thin.returncode == 0 and thin_binary.is_file():
-                  symbols = subprocess.run(
-                      ["nm", "-g", str(thin_binary)],
+              target = thin_binary if thin.returncode == 0 and thin_binary.is_file() else binary
+              raw_symbols = subprocess.run(
+                  ["nm", "-a", str(target)],
+                  check=False, capture_output=True, text=True,
+              ).stdout
+              try:
+                  demangled = subprocess.run(
+                      ["c++filt"], input=raw_symbols,
                       check=False, capture_output=True, text=True,
                   ).stdout
-                  has_symbol = "neon_variant_32" in symbols
+              except OSError:
+                  demangled = raw_symbols
+              if (
+                  "littlebit::bench::neon_variant_32" in demangled
+                  or "neon_variant_32" in raw_symbols
+              ):
+                  symbol_hits.append(f"{binary} ({archs or 'archs unknown'})")
 
-          arm64_only = archs == "arm64"
-          if has_neon_object and has_symbol and arm64_only:
+          if app_archs:
+              arm64_only = app_archs == "arm64"
+          elif arch_lines:
+              arm64_only = all(line.endswith("arm64") for line in arch_lines)
+          else:
+              arm64_only = False
+
+          if has_neon_object and symbol_hits and arm64_only:
               neon_status = (
                   "YES (arm64 object binary_packer_neon.o present; "
-                  "neon_variant_32 found in arm64 app binary)"
+                  "neon_variant_32 found in " + ", ".join(symbol_hits) + ")"
               )
           else:
               missing = []
               if not has_neon_object:
                   missing.append(f"missing {neon_object}")
-              if not has_symbol:
-                  missing.append("neon_variant_32 not found in arm64 app binary")
+              if not symbol_hits:
+                  missing.append(
+                      "neon_variant_32 not found via nm -a + c++filt in any "
+                      "app/debug-dylib/xctest Mach-O file"
+                  )
               if not arm64_only:
-                  missing.append(f"unexpected app architectures: {archs or 'unknown'}")
+                  missing.append(f"unexpected app architectures: {app_archs or 'unknown'}")
               neon_status = "NO / NOT PROVEN (" + "; ".join(missing) + ")"
+
+          print("NEON object:", neon_object, "present" if has_neon_object else "missing")
+          print("NEON Mach-O candidates:", arch_lines or ["none found"])
+          print("NEON symbol hits:", symbol_hits or ["none"])
 
           lines = [
               "## iOS Simulator CI",
               f"- Xcode: {env.get('XCODE_VERSION', 'unknown')}",
               f"- Simulator: {env.get('SIMULATOR_NAME', 'unknown')} (iOS {env.get('SIMULATOR_OS', 'unknown')})",
               f"- Destination: `{env.get('DESTINATION', 'unknown')}`",
-              f"- XCTest: run {env.get('TEST_TOTAL', 'unknown')}, passed {env.get('TEST_PASSED', 'unknown')}, "
-              f"failed {env.get('TEST_FAILED', 'unknown')}, skipped {env.get('TEST_SKIPPED', 'unknown')}",
+          ]
+          if env.get("TEST_COUNT_SOURCE") == "unparsed":
+              raw_path = env.get("XCTEST_RAW_SUMMARY", "")
+              try:
+                  raw_text = pathlib.Path(raw_path).read_text(
+                      encoding="utf-8", errors="replace"
+                  ).strip()
+              except OSError:
+                  raw_text = "(no raw test summary text available)"
+              lines.append("- XCTest: counts unavailable; raw summary text:")
+              lines.append("  ```text")
+              lines.extend("  " + line for line in (raw_text.splitlines() or ["(empty)"])[:100])
+              lines.append("  ```")
+          else:
+              lines.append(
+                  f"- XCTest: run {env.get('TEST_TOTAL', 'unknown')}, "
+                  f"passed {env.get('TEST_PASSED', 'unknown')}, "
+                  f"failed {env.get('TEST_FAILED', 'unknown')}, "
+                  f"skipped {env.get('TEST_SKIPPED', 'unknown')} "
+                  f"(source: {env.get('TEST_COUNT_SOURCE', 'unknown')})"
+              )
+          lines.extend([
               f"- Build rc: {env.get('BUILD_RC', 'not-run')}; test rc: {env.get('TEST_RC', 'not-run')}",
               f"- NEON kernel compiled in app target: {neon_status}",
+              f"  - NEON object: `{neon_object}` ({'present' if has_neon_object else 'missing'})",
+              f"  - Mach-O files checked: {', '.join(arch_lines) if arch_lines else 'none found'}",
+              f"  - `neon_variant_32` found in: {', '.join(symbol_hits) if symbol_hits else 'none'}",
               "- Real-model tests: none in `ios/LittleBitLoaderTests`; model-backed load/generation checks are local-only (no weights downloaded or committed).",
               "- Increased-memory-limit entitlement: not present; not changed in this CI-only commit.",
-          ]
+          ])
           with open(summary_path, "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")
           print("\n".join(lines))
@@ -494,6 +606,7 @@ jobs:
             ${{ runner.temp }}/ios-xcodebuild.log
             ${{ runner.temp }}/LittleBitTests.xcresult
             ${{ runner.temp }}/xcresult_summary.json
+            ${{ runner.temp }}/xctest-summary.txt
           if-no-files-found: warn
           retention-days: 7
 
