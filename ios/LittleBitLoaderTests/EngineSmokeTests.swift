@@ -12,10 +12,12 @@ final class EngineSmokeTests: XCTestCase {
     func testMissingModelDirectoryIsRejected() throws {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("littlebit-missing-\(UUID().uuidString)")
-        var error: NSError?
-        let ok = LittleBitEngineBridge.sharedInstance().verifyModelDirectory(missing.path, error: &error)
-        XCTAssertFalse(ok)
-        XCTAssertEqual(error?.code, 101)
+        do {
+            try LittleBitEngineBridge.sharedInstance().verifyModelDirectory(missing.path)
+            XCTFail("Expected verifyModelDirectory to reject a missing directory")
+        } catch {
+            XCTAssertEqual((error as NSError).code, 101)
+        }
     }
 
     func testResidentMemoryIsAvailable() {
