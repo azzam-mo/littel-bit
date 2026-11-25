@@ -97,13 +97,12 @@ bool SafeTensorsFile::open(const std::string& filepath) {
     const uint8_t* byte_ptr = static_cast<const uint8_t*>(mmap_addr_);
     uint64_t h_len = 0;
     std::memcpy(&h_len, byte_ptr, sizeof(uint64_t));
-    header_size_ = static_cast<size_t>(h_len);
-
-    if (8 + header_size_ > file_size_) {
+    if (h_len > static_cast<uint64_t>(file_size_ - 8)) {
         std::cerr << "SafeTensorsFile: Corrupt file, header_size exceeds file size" << std::endl;
         close();
         return false;
     }
+    header_size_ = static_cast<size_t>(h_len);
 
     data_offset_base_ = byte_ptr + 8 + header_size_;
 
@@ -179,6 +178,11 @@ bool SafeTensorsFile::load_tensor_to_float(const std::string& name, std::vector<
 
     const auto& info = it->second;
     size_t count = info.numel();
+    size_t item_size = 0;
+    if (info.dtype == DType::BF16 || info.dtype == DType::F16) item_size = 2;
+    else if (info.dtype == DType::F32) item_size = 4;
+    else return false;
+    if (info.data_ptr == nullptr || count > info.byte_size() / item_size) return false;
     out.resize(count);
 
     if (info.dtype == DType::BF16) {
@@ -208,6 +212,10 @@ bool SafeTensorsFile::load_tensor_to_i32(const std::string& name, std::vector<in
 
     const auto& info = it->second;
     size_t count = info.numel();
+    if (info.dtype != DType::I32 || info.data_ptr == nullptr ||
+        count > info.byte_size() / sizeof(int32_t)) {
+        return false;
+    }
     out.resize(count);
 
     if (info.dtype == DType::I32) {

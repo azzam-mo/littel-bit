@@ -6,8 +6,24 @@
 
 #include "littlebit/common.h"
 
+#include <cstddef>
+#include <cstdint>
+
 namespace littlebit {
 namespace bench {
+
+// Diagnostic-only lane trace for the 4-row production kernel shape. The
+// callback receives freshly computed float bit patterns for lanes 0..3 after
+// each packed bit is applied. It exists so raw-bit regressions can name the
+// first divergent intermediate without instrumenting production code.
+using NeonLaneTrace = void (*)(
+    size_t bit_index, size_t lane_count, const uint32_t* lane_bits, void* context
+);
+
+void neon_variant_4_trace(
+    const int32_t* packed_A, const float* x, float* y, size_t M, size_t K,
+    NeonLaneTrace trace, void* context
+);
 
 // Current production kernel shape: 4 rows per float32x4_t accumulator.
 void neon_variant_4(

@@ -9,7 +9,7 @@ int main() {
     std::string vocab_path = "/home/mrdp_24193/.gemini/antigravity/scratch/model-configs/vocab.json";
     std::string merges_path = "/home/mrdp_24193/.gemini/antigravity/scratch/model-configs/merges.txt";
 
-    bool ok = tok.load(vocab_path, merges_path);
+    [[maybe_unused]] bool ok = tok.load(vocab_path, merges_path);
     assert(ok && "Failed to load vocab/merges");
     std::cout << "  ✓ Tokenizer loaded " << tok.vocab_size() << " tokens." << std::endl;
 

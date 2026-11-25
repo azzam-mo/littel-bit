@@ -671,8 +671,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  unsigned-ipa-optional:
-    name: Optional AltStore-source IPA (workflow_dispatch only)
+  altstore-ipa-optional:
+    name: Optional AltStore-compatible source IPA (workflow_dispatch only)
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 30
@@ -806,12 +806,12 @@ jobs:
           print("Generated ephemeral archive scheme")
           PY
 
-      - name: Archive without Apple signing and package AltStore-source IPA
+      - name: Archive without Apple signing and package AltStore-compatible source IPA
         shell: bash
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/LittleBitLoader.xcarchive"
-          ipa="$RUNNER_TEMP/LittleBitLoader-altstore-source.ipa"
+          ipa="$RUNNER_TEMP/LittleBitLoader-altstore-compatible-source.ipa"
           rm -rf "$archive" "$ipa"
           xcodebuild archive \
             -project LittleBitLoader.xcodeproj \
@@ -831,17 +831,27 @@ jobs:
             exit 1
           fi
           ./scripts/package_altstore_ipa.sh "$app" "$ipa"
-          echo "AltStore-source IPA: $ipa"
-          echo "NOTE: ad-hoc signed only to carry the repository entitlement blob."
-          echo "It is not installable until AltStore/AltServer re-signs it with a free Apple ID."
+          echo "AltStore-compatible source IPA: $ipa"
+          echo "NOTE: this artifact uses ios/LittleBitLoader/LittleBitLoader.AltStore.entitlements."
+          echo "Its ad-hoc signature is not installable by iOS and carries no privileged entitlement."
+          echo "AltStore/AltServer must re-sign it with a free Apple ID."
 
-      - name: Upload AltStore-source IPA and archive log
+      - name: Privileged-entitlement IPA (BLOCKED in this workflow)
+        if: always()
+        shell: bash
+        run: |
+          echo "Not produced: the privileged IPA requires an authorized App ID, provisioning profile,"
+          echo "and Apple signing identity outside this repository."
+          echo "ios/LittleBitLoader/LittleBitLoader.entitlements is preserved for that separate path."
+          echo "scripts/package_privileged_ipa.sh remains blocked without explicit authorization."
+
+      - name: Upload AltStore-compatible source IPA and archive log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-altstore-source-ipa-optional
+          name: ios-altstore-compatible-source-ipa-optional
           path: |
-            ${{ runner.temp }}/LittleBitLoader-altstore-source.ipa
+            ${{ runner.temp }}/LittleBitLoader-altstore-compatible-source.ipa
             ${{ runner.temp }}/LittleBitLoader.xcarchive
             ${{ runner.temp }}/ios-archive.log
           if-no-files-found: warn

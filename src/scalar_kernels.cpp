@@ -22,9 +22,9 @@ void scalar_binary_matvec(
             for (size_t b = 0; b < bits_to_process; ++b) {
                 float val = x[k++];
                 if ((word & (1u << b)) == 0u) {
-                    sum += val; // bit 0 = +1
+                    sum = ordered_add(sum, val); // bit 0 = +1
                 } else {
-                    sum -= val; // bit 1 = -1
+                    sum = ordered_sub(sum, val); // bit 1 = -1
                 }
             }
         }

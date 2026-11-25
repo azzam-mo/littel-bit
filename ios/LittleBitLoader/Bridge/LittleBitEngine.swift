@@ -96,6 +96,7 @@ class LittleBitEngine: ObservableObject {
             case .loading: self.state = .loading
             case .error: self.state = .error
             case .unloaded: self.state = .unloaded
+            @unknown default: break
             }
         }
     }

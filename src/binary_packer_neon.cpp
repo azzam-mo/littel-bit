@@ -206,6 +206,63 @@ void neon_variant_4(
     neon_rows_group<1, false, false>(packed_A, x, y, M, K);
 }
 
+void neon_variant_4_trace(
+    const int32_t* packed_A, const float* x, float* y, size_t M, size_t K,
+    NeonLaneTrace trace, void* context
+) {
+    if (trace == nullptr || M < 4) {
+        neon_variant_4(packed_A, x, y, M, K);
+        return;
+    }
+
+    const size_t words_per_row = (K + 31) / 32;
+    if (words_per_row == 0) {
+        y[0] = y[1] = y[2] = y[3] = 0.0f;
+        if (M > 4) {
+            detail::scalar_binary_matvec(packed_A, x, y + 4, M - 4, K);
+        }
+        return;
+    }
+
+    float32x4_t sum = vdupq_n_f32(0.0f);
+    const int32_t* rows[4] = {
+        packed_A,
+        packed_A + words_per_row,
+        packed_A + 2 * words_per_row,
+        packed_A + 3 * words_per_row
+    };
+
+    for (size_t w = 0; w < words_per_row; ++w) {
+        const uint32x4_t words = load_four_words(
+            rows[0] + w, rows[1] + w, rows[2] + w, rows[3] + w
+        );
+        const size_t k0 = w * 32;
+        const size_t bits_to_process = (K - k0 >= 32) ? 32 : (K - k0);
+
+        for (size_t b = 0; b < bits_to_process; ++b) {
+            const float32x4_t vx = vdupq_n_f32(x[k0 + b]);
+            const uint32x4_t bit_mask = vdupq_n_u32(1u << b);
+            const float32x4_t add = add_ordered(sum, vx);
+            const float32x4_t sub = sub_ordered(sum, vx);
+            const uint32x4_t is_one = vceqq_u32(vandq_u32(words, bit_mask), bit_mask);
+            sum = vbslq_f32(is_one, sub, add);
+
+            float lane_values[4];
+            uint32_t lane_bits[4];
+            vst1q_f32(lane_values, sum);
+            std::memcpy(lane_bits, lane_values, sizeof(lane_bits));
+            trace(k0 + b, 4, lane_bits, context);
+        }
+    }
+
+    vst1q_f32(y, sum);
+    if (M > 4) {
+        neon_rows_group<1, false, false>(
+            packed_A + 4 * words_per_row, x, y + 4, M - 4, K
+        );
+    }
+}
+
 void neon_variant_8(
     const int32_t* packed_A, const float* x, float* y, size_t M, size_t K
 ) {
@@ -256,6 +313,18 @@ void neon_variant_4(
     const int32_t* packed_A, const float* x, float* y, size_t M, size_t K
 ) {
     detail::scalar_binary_matvec(packed_A, x, y, M, K);
+}
+
+void neon_variant_4_trace(
+    const int32_t* packed_A, const float* x, float* y, size_t M, size_t K,
+    NeonLaneTrace trace, void* context
+) {
+    detail::scalar_binary_matvec(packed_A, x, y, M, K);
+    if (trace != nullptr && M >= 4) {
+        uint32_t lane_bits[4];
+        std::memcpy(lane_bits, y, sizeof(lane_bits));
+        trace(K == 0 ? 0 : K - 1, 4, lane_bits, context);
+    }
 }
 
 void neon_variant_8(

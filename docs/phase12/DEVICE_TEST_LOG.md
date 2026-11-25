@@ -13,7 +13,7 @@
 | Bundle ID `com.littlebit.loader` in built app | Yes | VERIFIED statically in `Info.plist`/generator | `plutil` on installed app |
 | arm64 device binary / no x86_64 | Yes | VERIFIED statically in generator; script check added, not executed on macOS | `lipo -archs` output from build |
 | `com.apple.developer.kernel.increased-memory-limit` in generated profile | Yes for increased-memory validation | UNKNOWN | Entitlement dump from installed app + profile |
-| AltStore-source IPA with ad-hoc entitlement carrier | For path B | CODE ADDED — NOT EXECUTED (no macOS) | Script output + SHA-256 + readback plist |
+| AltStore-compatible source IPA with empty ad-hoc entitlement blob | For path B | CODE ADDED — NOT EXECUTED (no macOS) | Script output + SHA-256 + readback plist showing no privileged entitlement |
 | Converted LittleBit model directory | Yes | NOT COMMITTED / NOT AVAILABLE locally | Directory listing + checksums |
 | IPA installed and launched on iPhone | Yes | NOT AVAILABLE locally | Installed app version screen + launch screenshot |
 
@@ -91,8 +91,8 @@
 
 ### P12-T11 — AltStore/free Apple ID install and refresh
 - Status: `BLOCKED`
-- Command/action: build archive without Apple signing, run `scripts/package_altstore_ipa.sh`, sideload the resulting IPA with AltStore Classic, trust the developer profile, enable Developer Mode, then refresh before 7 days expire.
-- Expected: AltStore re-signs the app; app launches with `com.littlebit.loader`; entitlement blob is visible on the installed app.
+- Command/action: build archive without Apple signing, run `scripts/package_altstore_ipa.sh` (empty AltStore entitlements), sideload the resulting IPA with AltStore Classic, trust the developer profile, enable Developer Mode, then refresh before 7 days expire.
+- Expected: AltStore re-signs the app; app launches with `com.littlebit.loader`; installed app/profile contains no unexpected privileged entitlement. This path does not validate `com.apple.developer.kernel.increased-memory-limit`.
 - Evidence required: AltStore version + IPA SHA-256 + installed app screen + entitlement dump + refresh timestamp. Apple ID credentials must never be recorded in the repo or this log.
 - Actual result: not executed.
 
@@ -108,7 +108,8 @@ These are Xcode/iOS tests added during the second review pass. They are **not** 
 | P12-R04 | `testLoadFromUnloadCompletionIsAccepted` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
 | P12-R05 | `testRejectedGenerationReportsAcceptedFalse` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
 | P12-R06 | `testEngineUnloadCompletionRunsAfterBridgeTeardown` | CODE ADDED — NOT EXECUTED (no macOS/Xcode) |
+| P12-R07 | ARM64 Test 7c NEON4 `M=4 K=7 pattern=2 dirty=0` lane trace + tail boundaries | CODE ADDED — NOT EXECUTED (host is x86_64; no ARM64 runner locally) |
 
-Linux regression for the same mmap-lifetime class (`test_model_inference.cpp`: bad `lm_head` shape, failed reload, optional head tensor) **is executed** and passes as part of CTest 8/8.
+Linux regression for the same mmap-lifetime class (`test_model_inference.cpp`: bad `lm_head` shape, failed reload, optional head tensor) **is executed** and passes as part of CTest 8/8. Linux binary-packer exactness is also executed and passes, but the ARM64-only NEON section is compiled out on this host. A clean Linux Release rebuild with `-Wall -Wextra` reports 0 warnings; workflow YAML (4/4) and all `run:` blocks (41/41) pass static checks. Swift warning fixes are source-only here because no `swiftc`/Xcode is available.
 
-AltStore packaging script and source JSON example are **static-check only** here: `bash -n` and JSON parse pass on Linux, but `codesign`, `plutil`, `lipo`, IPA packaging, AltServer re-signing, and device install are all `NOT EXECUTED` without macOS and an iPhone.
+AltStore packaging script, privileged packaging script, and source JSON example are **static-check only** here: `bash -n` and JSON parse pass on Linux, but `codesign`, `plutil`, `lipo`, IPA packaging, authorized provisioning, AltServer re-signing, and device install are all `NOT EXECUTED` without macOS, an authorized identity/profile, and an iPhone. The AltStore path intentionally has an empty entitlement blob; the privileged path is `BLOCKED` by default.

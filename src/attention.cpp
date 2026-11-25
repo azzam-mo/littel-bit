@@ -9,8 +9,14 @@ void KVCache::initialize(size_t max_len, size_t kv_heads, size_t h_dim) {
     num_kv_heads = kv_heads;
     head_dim = h_dim;
     current_len = 0;
-    k_data.assign(max_seq_len * num_kv_heads * head_dim, 0.0f);
-    v_data.assign(max_seq_len * num_kv_heads * head_dim, 0.0f);
+    const size_t elements = max_seq_len * num_kv_heads * head_dim;
+    // A reload with a different max_seq_len must not hold the old and new KV
+    // buffers simultaneously; that transient peak matters without the
+    // increased-memory-limit entitlement. Values and numerics stay identical.
+    if (k_data.size() != elements) std::vector<float>().swap(k_data);
+    if (v_data.size() != elements) std::vector<float>().swap(v_data);
+    k_data.assign(elements, 0.0f);
+    v_data.assign(elements, 0.0f);
 }
 
 void KVCache::clear() {

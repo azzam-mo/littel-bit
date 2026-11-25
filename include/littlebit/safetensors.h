@@ -6,6 +6,7 @@
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
+#include <limits>
 
 namespace littlebit {
 
@@ -34,7 +35,14 @@ struct SafeTensorInfo {
     size_t numel() const {
         if (shape.empty()) return 0;
         size_t n = 1;
-        for (auto d : shape) n *= static_cast<size_t>(d);
+        for (auto d : shape) {
+            // Files.app imports are untrusted: reject negative dimensions and
+            // multiplication overflow instead of wrapping into a small resize.
+            if (d <= 0) return 0;
+            const size_t dim = static_cast<size_t>(d);
+            if (n > std::numeric_limits<size_t>::max() / dim) return 0;
+            n *= dim;
+        }
         return n;
     }
 };

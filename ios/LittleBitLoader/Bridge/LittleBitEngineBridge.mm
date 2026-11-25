@@ -144,8 +144,8 @@ std::string append_utf8_stream(std::string& pending, const std::string& bytes) {
     return YES;
 }
 
-// Main-queue only: clear_cache() and releasing the old Qwen3Model are what
-// actually close the mmap-backed SafeTensorsFile.
+// Main-queue only: clear_cache() resets generation state; replacing the old
+// Qwen3Model is what actually closes the mmap-backed SafeTensorsFile.
 - (void)teardownModelOnMainQueue {
     _model->clear_cache();
     _model = std::make_unique<littlebit::Qwen3Model>();

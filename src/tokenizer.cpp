@@ -116,6 +116,8 @@ bool Tokenizer::load(const std::string& vocab_file, const std::string& merges_fi
     try {
         nlohmann::json v_json;
         v_in >> v_json;
+        token_to_id_.reserve(v_json.size());
+        id_to_token_.reserve(v_json.size());
         for (auto it = v_json.begin(); it != v_json.end(); ++it) {
             std::string token = it.key();
             int32_t id = it.value().get<int32_t>();
@@ -165,15 +167,20 @@ bool Tokenizer::load_from_json(const std::string& tokenizer_json_file) {
         bpe_ranks_.clear();
         special_tokens_.clear();
 
-        for (auto it = model.at("vocab").begin(); it != model.at("vocab").end(); ++it) {
+        const auto& vocab = model.at("vocab");
+        token_to_id_.reserve(vocab.size());
+        id_to_token_.reserve(vocab.size());
+        for (auto it = vocab.begin(); it != vocab.end(); ++it) {
             std::string token = it.key();
             int32_t id = it.value().get<int32_t>();
             token_to_id_[token] = id;
             id_to_token_[id] = token;
         }
 
+        const auto& merges = model.at("merges");
+        bpe_ranks_.reserve(merges.size());
         int32_t rank = 0;
-        for (const auto& merge : model.at("merges")) {
+        for (const auto& merge : merges) {
             std::string pair;
             if (merge.is_array() && merge.size() == 2) {
                 pair = merge[0].get<std::string>() + " " + merge[1].get<std::string>();
@@ -184,7 +191,9 @@ bool Tokenizer::load_from_json(const std::string& tokenizer_json_file) {
         }
 
         if (root.contains("added_tokens")) {
-            for (const auto& added : root.at("added_tokens")) {
+            const auto& added_tokens = root.at("added_tokens");
+            special_tokens_.reserve(added_tokens.size());
+            for (const auto& added : added_tokens) {
                 std::string content = added.value("content", "");
                 int32_t id = added.value("id", -1);
                 if (!content.empty() && id >= 0) {

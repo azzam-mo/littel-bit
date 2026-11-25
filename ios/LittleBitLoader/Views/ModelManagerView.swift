@@ -218,9 +218,6 @@ struct ModelManagerView: View {
             items.append(ModelFileItem(name: name, sizeMB: sizeMB, isRequired: req, exists: exists))
         }
 
-        let hasTokenizerJSON = fm.fileExists(atPath: url.appendingPathComponent("tokenizer.json").path)
-        let hasVocabAndMerges = fm.fileExists(atPath: url.appendingPathComponent("vocab.json").path)
-            && fm.fileExists(atPath: url.appendingPathComponent("merges.txt").path)
         let hasShardedIndex = fm.fileExists(atPath: url.appendingPathComponent("model.safetensors.index.json").path)
         self.fileItems = items
         self.isCompatible = Self.isCompatibleModelDirectory(url)

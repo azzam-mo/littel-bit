@@ -7,9 +7,7 @@
   "tintColor": "#2D7FF9",
   "category": "developer",
   "appPermissions": {
-    "entitlements": [
-      "com.apple.developer.kernel.increased-memory-limit"
-    ],
+    "entitlements": [],
     "privacy": {}
   },
   "versions": [

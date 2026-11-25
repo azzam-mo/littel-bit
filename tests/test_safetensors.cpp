@@ -85,7 +85,7 @@ int main() {
     create_dummy_safetensors(test_path);
 
     littlebit::SafeTensorsFile file;
-    bool ok = file.open(test_path);
+    [[maybe_unused]] bool ok = file.open(test_path);
     assert(ok && "Failed to open safetensors file");
     assert(file.is_open());
 

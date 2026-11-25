@@ -19,7 +19,7 @@ int main() {
         // rms = sqrt(7.5) = 2.7386127875
         float rms = std::sqrt(7.5f);
         for (size_t i = 0; i < 4; ++i) {
-            float expected = (x[i] / rms) * weight[i];
+            [[maybe_unused]] float expected = (x[i] / rms) * weight[i];
             assert(std::fabs(out[i] - expected) < 1e-4f);
         }
         std::cout << "  ✓ RMSNorm calculation matches exact formula." << std::endl;
@@ -28,8 +28,8 @@ int main() {
     // Test 2: SiLU
     {
         float x = 2.0f;
-        float silu_val = littlebit::silu_scalar(x);
-        float expected = 2.0f / (1.0f + std::exp(-2.0f));
+        [[maybe_unused]] float silu_val = littlebit::silu_scalar(x);
+        [[maybe_unused]] float expected = 2.0f / (1.0f + std::exp(-2.0f));
         assert(std::fabs(silu_val - expected) < 1e-5f);
         std::cout << "  ✓ SiLU scalar calculation passed." << std::endl;
     }
@@ -38,7 +38,7 @@ int main() {
     {
         std::vector<float> logits = {1.0f, 2.0f, 3.0f};
         littlebit::softmax(logits.data(), 3);
-        float sum = logits[0] + logits[1] + logits[2];
+        [[maybe_unused]] float sum = logits[0] + logits[1] + logits[2];
         assert(std::fabs(sum - 1.0f) < 1e-5f);
         assert(logits[2] > logits[1] && logits[1] > logits[0]);
         std::cout << "  ✓ Softmax sums to 1.0 and preserves order." << std::endl;
@@ -60,7 +60,7 @@ int main() {
 
         // Position 1: should rotate
         rope.apply(q.data(), k.data(), 1, 1, 1);
-        float norm_before = std::sqrt(128.0f);
+        [[maybe_unused]] float norm_before = std::sqrt(128.0f);
         float norm_after = 0.0f;
         for (size_t i = 0; i < 128; ++i) norm_after += q[i] * q[i];
         norm_after = std::sqrt(norm_after);
